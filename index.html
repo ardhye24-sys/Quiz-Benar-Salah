@@ -513,6 +513,8 @@
     function startPreCountdown(index) {
       if (index >= questions.length) { finishQuiz(); return; }
       gameState = 'PRE_COUNTDOWN';
+      // Tampilkan durasi terpilih sejak awal (bukan angka bawaan "10")
+      document.getElementById('timer-number').innerText = globalDuration;
       const overlay = document.getElementById('pre-countdown-overlay');
       const numEl = document.getElementById('pre-countdown-num');
       overlay.classList.remove('hidden');
