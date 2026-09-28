@@ -557,7 +557,7 @@
       document.getElementById('zone-a-overlay').className = 'zone-panel zone-a-base';
       document.getElementById('zone-b-overlay').className = 'zone-panel zone-b-base';
 
-      timeLeft = Number(q.duration) || globalDuration;
+      timeLeft = globalDuration; // durasi dari Pengaturan, bukan dari data soal
       const timerNum = document.getElementById('timer-number');
       const timerBox = document.getElementById('timer-box');
       timerNum.innerText = timeLeft;
