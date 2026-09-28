@@ -290,6 +290,8 @@
             </div>
           </div>
           <h2 id="question-text" class="text-3xl md:text-5xl font-extrabold text-white tracking-wide leading-tight">Memuat pertanyaan...</h2>
+          <img id="question-image" alt="Gambar soal"
+     class="hidden max-h-[30vh] max-w-full object-contain rounded-lg border border-white/10 bg-black/40">
         </div>
       </div>
 
@@ -513,6 +515,7 @@
     function startPreCountdown(index) {
       if (index >= questions.length) { finishQuiz(); return; }
       gameState = 'PRE_COUNTDOWN';
+      if (questions[index] && questions[index].imageUrl) { new Image().src = questions[index].imageUrl; }
       // Tampilkan durasi terpilih sejak awal (bukan angka bawaan "10")
       document.getElementById('timer-number').innerText = globalDuration;
       const overlay = document.getElementById('pre-countdown-overlay');
@@ -546,6 +549,15 @@
 
       document.getElementById('question-counter').innerText = `SOAL ${index + 1} / ${questions.length}`;
       document.getElementById('question-text').innerText = q.question;
+      const imgEl = document.getElementById('question-image');
+if (q.imageUrl) {
+  imgEl.onerror = () => imgEl.classList.add('hidden'); // jika gagal dimuat, soal tetap jalan
+  imgEl.src = q.imageUrl;
+  imgEl.classList.remove('hidden');
+} else {
+  imgEl.classList.add('hidden');
+  imgEl.removeAttribute('src');
+}
 
       document.getElementById('text-option-a').innerText = q.optionA || 'SALAH';
       document.getElementById('text-option-b').innerText = q.optionB || 'BENAR';
@@ -612,6 +624,7 @@
         percentBenar: percentBenar,
         percentSalah: percentSalah,
         explanation: q.explanation || '-'
+        imageUrl: q.imageUrl || '',
       });
 
       const resA = document.getElementById('result-overlay-a');
@@ -663,6 +676,7 @@
             <span class="review-key">Kunci: ${correctText}</span>
           </div>
           <p class="text-sm font-bold text-white mt-1">${item.question}</p>
+          ${item.imageUrl ? `<img src="${item.imageUrl}" class="max-h-32 object-contain rounded mt-2 self-start">` : ''}
           <div class="space-y-1.5 mt-3">
             <div class="flex justify-between text-xs font-extrabold">
               <span style="color:var(--win)">✓ Jawab Benar</span>
