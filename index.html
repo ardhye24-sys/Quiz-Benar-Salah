@@ -28,7 +28,6 @@
     }
     .display-font { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.02em; }
 
-    /* Panel dengan sudut terpotong diagonal */
     .panel-cut {
       background: var(--panel);
       border: 1px solid rgba(255,255,255,0.06);
@@ -38,12 +37,12 @@
       clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
     }
 
-    /* Panel soal: ringkas, semi-transparan agar kamera tetap terlihat */
+    /* Panel soal: kecil, semi-transparan agar kamera tetap terlihat */
     .q-panel {
-      background: rgba(20,34,56,0.9);
+      background: rgba(20,34,56,0.88);
       backdrop-filter: blur(6px);
       border: 1px solid rgba(255,255,255,0.08);
-      clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
     }
 
     .hero-bg {
@@ -80,6 +79,11 @@
     .btn-ghost { background: var(--panel-soft); color: var(--chalk); border: 1px solid rgba(255,255,255,0.12); }
     .btn-ghost:hover { background: #24405f; transform: translateY(-2px); }
 
+    /* Tombol nonaktif saat loading: mencegah klik ganda */
+    .btn-primary:disabled, .btn-ghost:disabled {
+      opacity: .6; cursor: wait; pointer-events: none; filter: none; transform: none;
+    }
+
     select.fresh-select {
       background: var(--panel-soft);
       border: 1px solid rgba(255,255,255,0.12);
@@ -98,9 +102,6 @@
     .cam-badge-off { background: rgba(255,92,92,0.9); color: #fff; }
     .cam-badge-on { background: var(--win); color: #06251A; }
 
-    /* Zona jawaban di layar game.
-       Label zona di BAWAH (di atas status bar), banner hasil di TENGAH,
-       sehingga area atas hanya dipakai panel soal yang ringkas. */
     .zone-panel {
       width: 50%; height: 100%;
       display: flex; flex-direction: column; justify-content: space-between;
@@ -111,7 +112,6 @@
     .zone-state-correct { background: rgba(51,209,125,0.38) !important; box-shadow: inset 0 0 0 3px rgba(51,209,125,0.7); }
     .zone-state-wrong { background: rgba(255,92,92,0.38) !important; }
     .zone-state-miss { box-shadow: inset 0 0 0 3px rgba(255,255,255,0.55) !important; }
-    /* Zona yang TIDAK menyala saat hasil ditampilkan: digelapkan */
     .zone-state-off { background: rgba(0,0,0,0.6) !important; box-shadow: none !important; }
     .zone-state-off .zone-tag, .zone-state-off span { opacity: 0.35; }
 
@@ -146,7 +146,6 @@
     }
     .animate-pop { animation: popIn 0.4s ease-out; }
 
-    /* Kartu review */
     .review-card { background: var(--panel-soft); border: 1px solid rgba(255,255,255,0.06); }
     .review-key { font-weight: 800; font-size: 0.68rem; padding: 0.25rem 0.6rem; background: var(--panel); color: var(--gold); }
     .bar-track { width: 100%; height: 0.5rem; background: rgba(255,255,255,0.08); overflow: hidden; }
@@ -253,7 +252,7 @@
 
         <div class="flex gap-3 pt-1">
           <button onclick="backToLanding()" class="btn-ghost flex-1">Kembali</button>
-          <button onclick="launchGame()" class="btn-primary flex-1">Mulai Game 🚀</button>
+          <button id="btn-start" onclick="launchGame()" class="btn-primary flex-1">Mulai Game 🚀</button>
         </div>
       </div>
     </div>
@@ -303,27 +302,27 @@
         <span id="pre-countdown-num" class="display-font text-8xl text-[var(--gold)] animate-pop">3</span>
       </div>
 
-      <!-- PANEL SOAL (ringkas): nomor | timer | kontrol, lalu teks soal -->
-      <div class="relative z-10 px-3 pt-3 flex flex-col items-center pointer-events-none">
-        <div class="q-panel w-full max-w-3xl px-4 py-3 flex flex-col items-center gap-2">
+      <!-- PANEL SOAL (diperkecil): nomor | timer | kontrol, lalu teks soal -->
+      <div class="relative z-10 px-3 pt-2 flex flex-col items-center pointer-events-none">
+        <div class="q-panel w-full max-w-2xl px-3 py-1.5 flex flex-col items-center gap-1">
           <div class="grid grid-cols-[1fr_auto_1fr] items-center w-full">
             <div class="justify-self-start">
-              <span id="question-counter" class="display-font text-base bg-[var(--panel-soft)] px-2.5 py-0.5 text-[var(--chalk)]">SOAL 1 / 10</span>
+              <span id="question-counter" class="display-font text-xs bg-[var(--panel-soft)] px-2 py-0.5 text-[var(--chalk)]">SOAL 1 / 10</span>
             </div>
 
-            <div id="timer-box" class="timer-chip bg-[var(--panel)] border-2 border-[var(--gold)]/70 rounded-full w-14 h-14 flex flex-col items-center justify-center shadow-lg">
-              <span id="timer-number" class="display-font text-3xl leading-none text-[var(--gold)]">10</span>
+            <div id="timer-box" class="timer-chip bg-[var(--panel)] border-2 border-[var(--gold)]/70 rounded-full w-10 h-10 flex flex-col items-center justify-center shadow-lg">
+              <span id="timer-number" class="display-font text-xl leading-none text-[var(--gold)]">10</span>
             </div>
 
-            <div class="justify-self-end flex items-center gap-2">
-              <button onclick="toggleSound()" id="sound-btn" class="pointer-events-auto bg-[var(--panel-soft)] hover:brightness-125 px-2.5 py-1 rounded-full border border-white/10 text-[11px] font-bold">🔊 Suara</button>
-              <button onclick="exitGame()" class="pointer-events-auto bg-[var(--lose)]/20 hover:bg-[var(--lose)]/35 px-2.5 py-1 rounded-full border border-[var(--lose)]/50 text-[11px] text-[#FFB4B4] font-bold">✕ Keluar</button>
+            <div class="justify-self-end flex items-center gap-1.5">
+              <button onclick="toggleSound()" id="sound-btn" class="pointer-events-auto bg-[var(--panel-soft)] hover:brightness-125 px-2 py-0.5 rounded-full border border-white/10 text-[10px] font-bold">🔊 Suara</button>
+              <button onclick="exitGame()" class="pointer-events-auto bg-[var(--lose)]/20 hover:bg-[var(--lose)]/35 px-2 py-0.5 rounded-full border border-[var(--lose)]/50 text-[10px] text-[#FFB4B4] font-bold">✕ Keluar</button>
             </div>
           </div>
 
-          <h2 id="question-text" class="text-lg md:text-2xl font-bold text-white leading-snug text-center">Memuat pertanyaan...</h2>
+          <h2 id="question-text" class="text-sm md:text-base font-bold text-white leading-snug text-center">Memuat pertanyaan...</h2>
           <img id="question-image" alt="Gambar soal"
-               class="hidden max-h-[18vh] max-w-full object-contain rounded-md border border-white/10 bg-black/40">
+               class="hidden max-h-[10vh] max-w-full object-contain rounded-md border border-white/10 bg-black/40">
         </div>
       </div>
 
@@ -366,6 +365,9 @@
     let questions = [];
     let currentIndex = 0;
     let timerInterval = null;
+    let preInterval = null;   // interval countdown sebelum soal
+    let nextTimeout = null;   // jeda antar soal
+    let isLoading = false;    // kunci klik ganda saat memuat soal
     let globalDuration = 10;
     let timeLeft = 10;
     let gameState = 'IDLE';
@@ -377,13 +379,13 @@
     let detectionAnimId = null;
     let quizHistory = [];
 
+    const FALLBACK_QUESTIONS = [
+      { id: 1, question: "Matahari terbit dari arah barat?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Matahari tampak terbit dari timur.", duration: 10 }
+    ];
+
     window.addEventListener('DOMContentLoaded', async () => {
       questions = await apiGet('getActiveQuestions');
-      if (!questions || questions.length === 0) {
-        questions = [
-          { id: 1, question: "Matahari terbit dari arah barat?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Matahari tampak terbit dari timur.", duration: 10 }
-        ];
-      }
+      if (!questions || questions.length === 0) questions = FALLBACK_QUESTIONS;
 
       window.addEventListener('keydown', (e) => {
         if (gameState === 'PLAYING') {
@@ -435,28 +437,40 @@
     }
 
     async function launchGame() {
-      sound.init();
-      globalDuration = Number(document.getElementById('setting-duration').value) || 10;
-      quizHistory = [];
+      if (isLoading) return;            // abaikan klik kedua
+      isLoading = true;
+      const btn = document.getElementById('btn-start');
+      const label = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Memuat soal...';
 
-      questions = await apiGet('getActiveQuestions');
-      if (!questions || questions.length === 0) {
-        questions = [
-          { id: 1, question: "Matahari terbit dari arah barat?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Matahari tampak terbit dari timur.", duration: 10 }
-        ];
+      try {
+        sound.init();
+        globalDuration = Number(document.getElementById('setting-duration').value) || 10;
+        quizHistory = [];
+
+        questions = await apiGet('getActiveQuestions');
+        if (!questions || questions.length === 0) questions = FALLBACK_QUESTIONS;
+
+        currentIndex = 0;
+        document.getElementById('screen-settings').classList.add('hidden');
+        document.getElementById('screen-game').classList.remove('hidden');
+
+        initGameCamera();
+        startPreCountdown(currentIndex);
+      } finally {
+        isLoading = false;              // selalu dibuka lagi, meski error
+        btn.disabled = false;
+        btn.innerHTML = label;
       }
-
-      currentIndex = 0;
-      document.getElementById('screen-settings').classList.add('hidden');
-      document.getElementById('screen-game').classList.remove('hidden');
-
-      initGameCamera();
-      startPreCountdown(currentIndex);
     }
 
     function exitGame() {
       stopCameraStream();
       if (timerInterval) clearInterval(timerInterval);
+      clearInterval(preInterval);
+      clearTimeout(nextTimeout);
+      document.getElementById('pre-countdown-overlay').classList.add('hidden');
       gameState = 'IDLE';
       document.getElementById('screen-game').classList.add('hidden');
       document.getElementById('screen-landing').classList.remove('hidden');
@@ -480,6 +494,7 @@
       const canvas = document.getElementById('tracker-canvas');
       if (!canvas) return;
       canvasContext = canvas.getContext('2d', { willReadFrequently: true });
+      if (detectionAnimId) cancelAnimationFrame(detectionAnimId); // hindari loop ganda
 
       function processFrame() {
         if (gameState === 'PLAYING' && video.readyState === video.HAVE_ENOUGH_DATA) {
@@ -541,9 +556,9 @@
 
     function startPreCountdown(index) {
       if (index >= questions.length) { finishQuiz(); return; }
+      if (preInterval) clearInterval(preInterval); // cegah countdown bertumpuk
       gameState = 'PRE_COUNTDOWN';
       if (questions[index] && questions[index].imageUrl) { new Image().src = questions[index].imageUrl; }
-      // Tampilkan durasi terpilih sejak awal (bukan angka bawaan "10")
       document.getElementById('timer-number').innerText = globalDuration;
       const overlay = document.getElementById('pre-countdown-overlay');
       const numEl = document.getElementById('pre-countdown-num');
@@ -553,7 +568,7 @@
       numEl.innerText = count;
       sound.playCountdown();
 
-      const preInterval = setInterval(() => {
+      preInterval = setInterval(() => {
         count--;
         if (count > 0) {
           numEl.innerText = count;
@@ -595,11 +610,10 @@
       resA.className = 'hidden text-center result-banner';
       resB.className = 'hidden text-center result-banner';
 
-      // Zona tetap netral selama waktu hitung mundur berjalan
       document.getElementById('zone-a-overlay').className = 'zone-panel zone-a-base';
       document.getElementById('zone-b-overlay').className = 'zone-panel zone-b-base';
 
-      timeLeft = globalDuration; // durasi dari Pengaturan, bukan dari data soal
+      timeLeft = globalDuration;
       const timerNum = document.getElementById('timer-number');
       const timerBox = document.getElementById('timer-box');
       timerBox.classList.remove('animate-glow', 'timer-urgent');
@@ -635,6 +649,7 @@
     }
 
     function lockAnswer(q, index) {
+      if (gameState === 'RESULT') return; // pengaman: jangan proses dua kali
       gameState = 'RESULT';
       sound.playNext();
       const timerBox = document.getElementById('timer-box');
@@ -643,7 +658,6 @@
       const correct = normalizeAnswer(q.correctAnswer);
       const chosen = keyboardChoice || (zoneBScore >= zoneAScore ? 'B' : 'A');
 
-      // Persentase jawab benar/salah diambil dari sebaran aktivitas kedua zona
       const percentBenar = correct === 'A' ? zoneAScore : zoneBScore;
       const percentSalah = correct === 'A' ? zoneBScore : zoneAScore;
 
@@ -680,7 +694,7 @@
 
       if (chosen === correct) sound.playCorrect(); else sound.playWrong();
 
-      setTimeout(() => {
+      nextTimeout = setTimeout(() => {
         currentIndex++;
         startPreCountdown(currentIndex);
       }, 4500);
