@@ -619,13 +619,13 @@ if (q.imageUrl) {
       const percentSalah = correct === 'A' ? zoneBScore : zoneAScore;
 
       quizHistory.push({
-        question: q.question,
-        correct: correct,
-        percentBenar: percentBenar,
-        percentSalah: percentSalah,
-        explanation: q.explanation || '-'
-        imageUrl: q.imageUrl || '',
-      });
+  question: q.question,
+  correct: correct,
+  percentBenar: percentBenar,
+  percentSalah: percentSalah,
+  explanation: q.explanation || '-',    // ← tambahkan koma
+  imageUrl: q.imageUrl || '',
+});
 
       const resA = document.getElementById('result-overlay-a');
       const resB = document.getElementById('result-overlay-b');
