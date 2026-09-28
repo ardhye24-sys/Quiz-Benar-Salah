@@ -291,7 +291,7 @@
           </div>
           <h2 id="question-text" class="text-3xl md:text-5xl font-extrabold text-white tracking-wide leading-tight">Memuat pertanyaan...</h2>
           <img id="question-image" alt="Gambar soal"
-     class="hidden max-h-[30vh] max-w-full object-contain rounded-lg border border-white/10 bg-black/40">
+               class="hidden max-h-[30vh] max-w-full object-contain rounded-lg border border-white/10 bg-black/40">
         </div>
       </div>
 
@@ -549,15 +549,16 @@
 
       document.getElementById('question-counter').innerText = `SOAL ${index + 1} / ${questions.length}`;
       document.getElementById('question-text').innerText = q.question;
+
       const imgEl = document.getElementById('question-image');
-if (q.imageUrl) {
-  imgEl.onerror = () => imgEl.classList.add('hidden'); // jika gagal dimuat, soal tetap jalan
-  imgEl.src = q.imageUrl;
-  imgEl.classList.remove('hidden');
-} else {
-  imgEl.classList.add('hidden');
-  imgEl.removeAttribute('src');
-}
+      if (q.imageUrl) {
+        imgEl.onerror = () => imgEl.classList.add('hidden'); // jika gagal dimuat, soal tetap jalan
+        imgEl.src = q.imageUrl;
+        imgEl.classList.remove('hidden');
+      } else {
+        imgEl.classList.add('hidden');
+        imgEl.removeAttribute('src');
+      }
 
       document.getElementById('text-option-a').innerText = q.optionA || 'SALAH';
       document.getElementById('text-option-b').innerText = q.optionB || 'BENAR';
@@ -619,13 +620,13 @@ if (q.imageUrl) {
       const percentSalah = correct === 'A' ? zoneBScore : zoneAScore;
 
       quizHistory.push({
-  question: q.question,
-  correct: correct,
-  percentBenar: percentBenar,
-  percentSalah: percentSalah,
-  explanation: q.explanation || '-',    // ← tambahkan koma
-  imageUrl: q.imageUrl || '',
-});
+        question: q.question,
+        correct: correct,
+        percentBenar: percentBenar,
+        percentSalah: percentSalah,
+        explanation: q.explanation || '-',   // <-- PERBAIKAN: koma yang hilang ditambahkan di sini
+        imageUrl: q.imageUrl || ''
+      });
 
       const resA = document.getElementById('result-overlay-a');
       const resB = document.getElementById('result-overlay-b');
