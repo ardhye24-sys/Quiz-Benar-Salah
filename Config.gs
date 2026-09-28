@@ -22,9 +22,10 @@ function initializeDatabase(ss) {
   var qSheet = ss.getSheetByName('QUESTIONS');
   if (!qSheet) {
     qSheet = ss.insertSheet('QUESTIONS');
-    qSheet.appendRow(['id', 'question', 'optionA', 'optionB', 'correctAnswer', 'explanation', 'duration', 'active', 'order']);
-    qSheet.appendRow(['1', 'Matahari terbit dari arah barat?', 'SALAH', 'BENAR', 'B', 'Matahari tampak terbit dari arah timur.', 10, true, 1]);
+    qSheet.appendRow(['id', 'question', 'optionA', 'optionB', 'correctAnswer', 'explanation', 'duration', 'active', 'order', 'imageUrl']);
+    qSheet.appendRow(['1', 'Matahari terbit dari arah barat?', 'SALAH', 'BENAR', 'B', 'Matahari tampak terbit dari arah timur.', 10, true, 1, '']);
   }
+
   var sSheet = ss.getSheetByName('SETTINGS');
   if (!sSheet) {
     sSheet = ss.insertSheet('SETTINGS');
@@ -39,7 +40,9 @@ function getGameSettings() {
   var config = getConfig();
   var ss = SpreadsheetApp.openById(config.spreadsheetId);
   var sheet = ss.getSheetByName('SETTINGS');
+
   var settings = { defaultDuration: 10, gameMode: 'GROUP', soundEnabled: true };
+
   if (sheet) {
     var data = sheet.getDataRange().getValues();
     for (var i = 1; i < data.length; i++) {
@@ -59,6 +62,7 @@ function saveGameSettings(settings) {
   var config = getConfig();
   var ss = SpreadsheetApp.openById(config.spreadsheetId);
   var sheet = ss.getSheetByName('SETTINGS');
+
   if (!sheet) {
     initializeDatabase(ss);
     sheet = ss.getSheetByName('SETTINGS');
@@ -81,6 +85,5 @@ function saveGameSettings(settings) {
       sheet.appendRow([key, String(keys[key])]);
     }
   }
-
   return { success: true };
 }
