@@ -8,9 +8,46 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;900&display=swap');
 body { font-family: 'Poppins', sans-serif; }
+
+/* ---------- Efek loading ---------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn-spinner {
+  display: inline-block; width: 1em; height: 1em; margin-right: .5em; vertical-align: -0.15em;
+  border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 9999px;
+  animation: spin .7s linear infinite;
+}
+.mini-spinner {
+  display: inline-block; width: .9em; height: .9em; margin-right: .4em; vertical-align: -0.12em;
+  border: 2px solid rgba(148,163,184,.4); border-top-color: #818cf8; border-radius: 9999px;
+  animation: spin .7s linear infinite;
+}
+button:disabled { opacity: .65; cursor: wait; pointer-events: none; }
+
+.loading-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem;
+  background: rgba(15,23,42,.85); backdrop-filter: blur(4px);
+  color: #f1f5f9; font-weight: 600; font-size: .9rem;
+}
+.loading-overlay.hidden { display: none; }
+.big-spinner {
+  width: 3rem; height: 3rem; border-radius: 9999px;
+  border: 4px solid rgba(255,255,255,.15); border-top-color: #818cf8;
+  animation: spin .8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-spinner, .mini-spinner, .big-spinner { animation-duration: 2s; }
+}
 </style>
 </head>
 <body class="bg-slate-900 text-white min-h-screen flex flex-col">
+
+<!-- OVERLAY LOADING (memuat / menghapus data) -->
+<div id="loading-overlay" class="loading-overlay hidden" role="status" aria-live="polite">
+  <div class="big-spinner"></div>
+  <p id="loading-text">Memuat data...</p>
+</div>
 
 <script>
 // PENTING: URL ini HARUS SAMA PERSIS dengan API_URL di index.html —
@@ -34,6 +71,30 @@ async function apiPost(action, data = {}) {
     });
     return await res.json();
   } catch(e) { console.error(e); return { success: false }; }
+}
+
+/* ---------- Helper loading ---------- */
+function showLoading(text) {
+  document.getElementById('loading-text').innerText = text || 'Memuat data...';
+  document.getElementById('loading-overlay').classList.remove('hidden');
+}
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.add('hidden');
+}
+// Overlay layar penuh selama proses berjalan
+async function withLoading(text, fn) {
+  showLoading(text);
+  try { return await fn(); }
+  finally { hideLoading(); }
+}
+// Spinner di dalam tombol + tombol dikunci (cegah klik ganda)
+async function withButtonLoading(btn, text, fn) {
+  if (btn.disabled) return;
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="btn-spinner"></span>${text}`;
+  try { return await fn(); }
+  finally { btn.disabled = false; btn.innerHTML = label; }
 }
 </script>
 
@@ -59,7 +120,7 @@ async function apiPost(action, data = {}) {
         <label class="block text-xs font-bold text-slate-300 mb-1">PASSWORD ADMIN</label>
         <input type="password" id="admin-password" required class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••">
       </div>
-      <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-3 rounded-xl shadow-lg transition">MASUK</button>
+      <button type="submit" id="btn-login" class="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-3 rounded-xl shadow-lg transition">MASUK</button>
     </form>
     <div class="mt-6 text-center">
       <a href="index.html" class="text-xs text-slate-400 hover:text-white underline">← Kembali ke Halaman Utama Game</a>
@@ -169,8 +230,8 @@ async function apiPost(action, data = {}) {
       </div>
 
       <div class="flex justify-end gap-3 pt-4">
-        <button type="button" onclick="closeModal()" class="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-xl font-semibold transition">Batal</button>
-        <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-xl font-bold shadow transition">Simpan Soal</button>
+        <button type="button" id="btn-cancel" onclick="closeModal()" class="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-xl font-semibold transition">Batal</button>
+        <button type="submit" id="btn-save" class="bg-indigo-600 hover:bg-indigo-500 px-6 py-3 rounded-xl font-bold shadow transition">Simpan Soal</button>
       </div>
     </form>
   </div>
@@ -187,15 +248,19 @@ window.addEventListener('DOMContentLoaded', () => {
 
 async function handleLogin(e) {
   e.preventDefault();
+  const btn = document.getElementById('btn-login');
   const pwd = document.getElementById('admin-password').value;
-  const res = await apiPost('authenticate', { password: pwd });
-  if (res.success) {
-    authToken = res.token;
-    sessionStorage.setItem('admin_token', authToken);
-    showDashboard();
-  } else {
-    alert(res.message || 'Password salah.');
-  }
+
+  await withButtonLoading(btn, 'Memeriksa...', async () => {
+    const res = await apiPost('authenticate', { password: pwd });
+    if (res.success) {
+      authToken = res.token;
+      sessionStorage.setItem('admin_token', authToken);
+      showDashboard();
+    } else {
+      alert(res.message || 'Password salah.');
+    }
+  });
 }
 
 function logout() {
@@ -214,7 +279,7 @@ function showDashboard() {
 }
 
 async function loadQuestionsTable() {
-  allQuestions = await apiGet('getQuestions');
+  allQuestions = await withLoading('Memuat daftar soal dari database...', () => apiGet('getQuestions'));
   const tbody = document.getElementById('question-table-body');
   tbody.innerHTML = '';
 
@@ -363,8 +428,10 @@ async function handleImageSelect(e) {
   if (!file) return;
 
   const status = document.getElementById('q-image-status');
+  const saveBtn = document.getElementById('btn-save');
   uploadingImage = true;
-  status.innerText = '⏳ Mengunggah gambar...';
+  saveBtn.disabled = true; // Simpan dikunci selama gambar diunggah
+  status.innerHTML = '<span class="mini-spinner"></span>Mengunggah gambar...';
 
   try {
     const { data, mimeType } = await resizeImage(file);
@@ -380,6 +447,7 @@ async function handleImageSelect(e) {
     status.innerText = '✕ Gagal memproses gambar';
   } finally {
     uploadingImage = false;
+    saveBtn.disabled = false;
   }
 }
 
@@ -393,6 +461,8 @@ async function saveQuestion(e) {
     return;
   }
 
+  const btn = document.getElementById('btn-save');
+  const cancelBtn = document.getElementById('btn-cancel');
   const id = document.getElementById('q-id').value;
 
   const payload = {
@@ -408,19 +478,28 @@ async function saveQuestion(e) {
     imageUrl: document.getElementById('q-image').value
   };
 
-  if (id) {
-    await apiPost('updateQuestion', { payload });
-  } else {
-    await apiPost('createQuestion', { payload });
-  }
+  cancelBtn.disabled = true;
+  let ok = false;
 
-  closeModal();
-  loadQuestionsTable();
+  await withButtonLoading(btn, 'Menyimpan...', async () => {
+    const res = id
+      ? await apiPost('updateQuestion', { payload })
+      : await apiPost('createQuestion', { payload });
+    ok = !(res && res.success === false);
+    if (!ok) alert((res && res.message) || 'Gagal menyimpan soal. Periksa koneksi lalu coba lagi.');
+  });
+
+  cancelBtn.disabled = false;
+
+  if (ok) {
+    closeModal();
+    loadQuestionsTable();
+  }
 }
 
 async function deleteQuestion(id) {
   if (confirm('Apakah Anda yakin ingin menghapus soal ini?')) {
-    await apiPost('deleteQuestion', { id });
+    await withLoading('Menghapus soal...', () => apiPost('deleteQuestion', { id }));
     loadQuestionsTable();
   }
 }
