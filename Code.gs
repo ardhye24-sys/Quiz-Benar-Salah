@@ -5,7 +5,7 @@
 function doGet(e) {
   var action = e && e.parameter ? e.parameter.action : '';
   var result = {};
-  
+
   try {
     if (action === 'getActiveQuestions') {
       result = getActiveQuestions();
@@ -19,7 +19,7 @@ function doGet(e) {
   } catch (err) {
     result = { status: 'error', message: err.toString() };
   }
-  
+
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -31,10 +31,10 @@ function doPost(e) {
   } catch (err) {
     body = e.parameter || {};
   }
-  
+
   var action = body.action;
   var result = { success: false, message: 'Invalid action' };
-  
+
   try {
     if (action === 'createQuestion') {
       result = createQuestion(body.payload);
@@ -42,6 +42,8 @@ function doPost(e) {
       result = updateQuestion(body.payload);
     } else if (action === 'deleteQuestion') {
       result = deleteQuestionData(body.id);
+    } else if (action === 'uploadImage') {
+      result = uploadQuestionImage(body.payload);
     } else if (action === 'authenticate') {
       result = authenticateTeacher(body.password);
     } else if (action === 'saveSettings') {
@@ -50,7 +52,7 @@ function doPost(e) {
   } catch (err) {
     result = { success: false, message: err.toString() };
   }
-  
+
   return ContentService.createTextOutput(JSON.stringify(result))
     .setMimeType(ContentService.MimeType.JSON);
 }
