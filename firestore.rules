@@ -4,10 +4,10 @@ service cloud.firestore {
     match /questions/{id} {
       // Siapa pun boleh memainkan game (baca soal)
       allow read: if true;
-      // Hanya UID anonymous guru yang boleh tambah/ubah/hapus soal.
-      // GANTI "UID_GURU" dengan UID yang tampil di Dashboard Guru setelah login pertama.
+      // Hanya akun guru yang boleh tambah/ubah/hapus soal.
+      // GANTI dengan email akun guru yang dibuat di Firebase Authentication > Users.
       allow write: if request.auth != null
-                   && request.auth.uid == "UID_GURU";
+                   && request.auth.token.email == "guru@email.com";
     }
   }
 }

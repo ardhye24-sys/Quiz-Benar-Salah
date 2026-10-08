@@ -221,7 +221,7 @@
         if (!QUESTIONS) return { success: false, message: 'Konfigurasi Firebase bermasalah:\n' + FIREBASE_ERROR };
         switch (action) {
           case 'authenticate': {
-            const cred = auth.currentUser ? { user: auth.currentUser } : await auth.signInAnonymously();
+            const cred = await auth.signInWithEmailAndPassword(data.email, data.password);
             return { success: true, token: cred.user.uid };
           }
           case 'createQuestion': {
@@ -249,14 +249,18 @@
         console.error(e);
         const code = e.code || 'unknown';
         const hints = {
-          'auth/operation-not-allowed': 'Anonymous belum diaktifkan. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
-          'auth/admin-restricted-operation': 'Anonymous belum diaktifkan. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
+          'auth/operation-not-allowed': 'Email/Password belum diaktifkan. Firebase Console > Authentication > Sign-in method > Email/Password > Enable.',
+          'auth/invalid-credential': 'Email atau password salah.',
+          'auth/wrong-password': 'Email atau password salah.',
+          'auth/user-not-found': 'Email belum terdaftar. Buat user di Firebase Console > Authentication > Users > Add user.',
+          'auth/invalid-email': 'Format email tidak valid.',
+          'auth/too-many-requests': 'Terlalu banyak percobaan. Tunggu beberapa menit lalu coba lagi.',
           'auth/unauthorized-domain': 'Domain belum diizinkan. Firebase Console > Authentication > Settings > Authorized domains > tambahkan ' + location.hostname,
           'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'API key salah. Periksa isi firebase-config.js.',
           'auth/invalid-api-key': 'API key salah. Periksa isi firebase-config.js.',
           'auth/configuration-not-found': 'Authentication belum diaktifkan. Klik Get started di menu Authentication.',
           'auth/network-request-failed': 'Koneksi internet bermasalah.',
-          'permission-denied': 'Tidak punya izin menulis. Pastikan UID guru sudah didaftarkan di Firestore Rules lalu Publish.'
+          'permission-denied': 'Tidak punya izin menulis. Pastikan email guru di Firestore Rules sama persis dengan email login, lalu Publish.'
         };
         return { success: false, message: (hints[code] || (e.message || 'Terjadi kesalahan.')) + '\n\n[kode: ' + code + ']' };
       }
@@ -491,9 +495,17 @@
         <!-- LOGIN SECTION -->
         <div id="login-section" class="max-w-md mx-auto mt-16 bg-slate-800/90 border border-slate-700 p-8 rounded-3xl shadow-2xl">
           <h2 class="text-2xl font-black mb-2 text-center">LOGIN GURU</h2>
-          <p class="text-slate-400 text-xs text-center mb-6">Masuk menggunakan akun anonymous. Hanya perangkat/browser dengan UID guru yang terdaftar yang bisa menyimpan perubahan soal.</p>
+          <p class="text-slate-400 text-xs text-center mb-6">Masuk dengan akun guru untuk mengelola soal kuis.</p>
           <form onsubmit="handleLogin(event)" class="space-y-4">
-            <button type="submit" id="btn-login" class="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-3 rounded-xl shadow-lg transition">MASUK SEBAGAI GURU</button>
+            <div>
+              <label class="block text-xs font-bold text-slate-300 mb-1">EMAIL GURU</label>
+              <input type="email" id="admin-email" required autocomplete="username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" placeholder="guru@email.com">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-300 mb-1">PASSWORD</label>
+              <input type="password" id="admin-password" required autocomplete="current-password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••">
+            </div>
+            <button type="submit" id="btn-login" class="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-3 rounded-xl shadow-lg transition">MASUK</button>
           </form>
           <div class="mt-6 text-center">
             <button onclick="closeAdminSection()" class="text-xs text-slate-400 hover:text-white underline">← Kembali ke Halaman Utama Game</button>
@@ -502,10 +514,6 @@
 
         <!-- DASHBOARD SECTION -->
         <div id="dashboard-section" class="hidden space-y-6">
-          <div class="bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
-            <span>UID akun guru (daftarkan di Firestore Rules): <code id="admin-uid" class="font-mono bg-black/30 px-2 py-0.5 rounded select-text">-</code></span>
-            <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('admin-uid').innerText)" class="bg-amber-500/20 hover:bg-amber-500/30 px-3 py-1 rounded-lg font-semibold">Salin UID</button>
-          </div>
           <div class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-800/60 border border-slate-700 p-6 rounded-3xl">
             <div>
               <h2 class="text-xl font-black">Daftar Soal Kuis</h2>
@@ -1002,11 +1010,7 @@
        LOGIKA DASHBOARD GURU / ADMIN
        ======================================================== */
     let authToken = null;
-    if (auth) auth.onAuthStateChanged(user => {
-      authToken = user ? user.uid : null;
-      const el = document.getElementById('admin-uid');
-      if (el) el.innerText = user ? user.uid : '-';
-    });
+    if (auth) auth.onAuthStateChanged(user => { authToken = user ? user.uid : null; });
     let allQuestions = [];
     let uploadingImage = false;
 
@@ -1024,8 +1028,11 @@
     async function handleLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('btn-login');
+      const email = document.getElementById('admin-email').value.trim();
+      const pwd = document.getElementById('admin-password').value;
+
       await withButtonLoading(btn, 'Memeriksa...', async () => {
-        const res = await apiPost('authenticate');
+        const res = await apiPost('authenticate', { email, password: pwd });
         if (res.success) {
           authToken = res.token;
           showDashboard();
@@ -1044,7 +1051,6 @@
     }
 
     function showDashboard() {
-      if (auth && auth.currentUser) document.getElementById('admin-uid').innerText = auth.currentUser.uid;
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
       document.getElementById('logout-btn').classList.remove('hidden');
