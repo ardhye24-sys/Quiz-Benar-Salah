@@ -1,8 +1,11 @@
-const firebaseConfig = {
-  apiKey: "AIzaSyDsnHuSviNmL5FECLuU3BiSTinLXZ1bttQ",
-  authDomain: "true-false-96231.firebaseapp.com",
-  projectId: "true-false-96231",
-  storageBucket: "true-false-96231.firebasestorage.app",
-  messagingSenderId: "534499013734",
-  appId: "1:534499013734:web:a9e22813d8119f5051e9a7"
+// Ganti nilai di bawah dengan config dari Firebase Console:
+// Project settings (ikon ⚙️) > General > Your apps > Web app > SDK setup and configuration.
+// Config web Firebase ini BUKAN rahasia; keamanan data diatur lewat Firestore Rules.
+window.FIREBASE_CONFIG = {
+  apiKey: "ISI_API_KEY",
+  authDomain: "ISI_PROJECT_ID.firebaseapp.com",
+  projectId: "ISI_PROJECT_ID",
+  storageBucket: "ISI_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "ISI_SENDER_ID",
+  appId: "ISI_APP_ID"
 };

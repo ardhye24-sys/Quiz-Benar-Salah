@@ -232,9 +232,18 @@
         return { success: false, message: 'Aksi tidak dikenal' };
       } catch (e) {
         console.error(e);
-        const denied = e.code === 'permission-denied';
-        const anonOff = e.code === 'auth/operation-not-allowed' || e.code === 'auth/admin-restricted-operation';
-        return { success: false, message: anonOff ? 'Anonymous Authentication belum diaktifkan di Firebase Console.' : denied ? 'Tidak punya izin menulis. Pastikan UID guru sudah didaftarkan di Firestore Rules.' : (e.message || 'Terjadi kesalahan.') };
+        const code = e.code || 'unknown';
+        const hints = {
+          'auth/operation-not-allowed': 'Anonymous belum diaktifkan. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
+          'auth/admin-restricted-operation': 'Anonymous belum diaktifkan. Firebase Console > Authentication > Sign-in method > Anonymous > Enable.',
+          'auth/unauthorized-domain': 'Domain belum diizinkan. Firebase Console > Authentication > Settings > Authorized domains > tambahkan ' + location.hostname,
+          'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'API key salah. Periksa isi firebase-config.js.',
+          'auth/invalid-api-key': 'API key salah. Periksa isi firebase-config.js.',
+          'auth/configuration-not-found': 'Authentication belum diaktifkan. Klik Get started di menu Authentication.',
+          'auth/network-request-failed': 'Koneksi internet bermasalah.',
+          'permission-denied': 'Tidak punya izin menulis. Pastikan UID guru sudah didaftarkan di Firestore Rules lalu Publish.'
+        };
+        return { success: false, message: (hints[code] || (e.message || 'Terjadi kesalahan.')) + '\n\n[kode: ' + code + ']' };
       }
     }
 
