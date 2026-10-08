@@ -362,6 +362,9 @@
 
         <div class="space-y-2">
           <label class="block text-xs font-extrabold text-[var(--muted)] uppercase tracking-wide">Izin &amp; preview kamera (mirroring)</label>
+          <select id="setting-camera" onchange="changeCamera(this.value)" class="fresh-select w-full rounded-lg px-4 py-2.5 text-sm">
+            <option value="">Klik "Aktifkan &amp; Tes Kamera" untuk memilih kamera</option>
+          </select>
           <div class="relative w-full h-40 cam-frame overflow-hidden">
             <video id="setup-webcam" autoplay playsinline muted class="w-full h-full object-cover transform -scale-x-100"></video>
             <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
@@ -683,17 +686,63 @@
       document.getElementById('screen-landing').classList.remove('hidden');
     }
 
+    /* ===== KAMERA PERANGKAT (kamera virtual seperti DroidCam/OBS disembunyikan) ===== */
+    const VIRTUAL_CAM = /droidcam|obs|virtual|iriun|epoccam|ivcam|manycam|camo|snap camera|nvidia broadcast|xsplit|webcamoid|splitcam|vcam|e2esoft|kinoni/i;
+    let selectedCameraId = null;
+    try { selectedCameraId = localStorage.getItem('camera_id'); } catch (e) {}
+
+    async function listDeviceCameras() {
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      let cams = devices.filter(d => d.kind === 'videoinput');
+      // Label baru tersedia setelah izin kamera diberikan
+      if (cams.length && cams.every(c => !c.label)) {
+        const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+        probe.getTracks().forEach(t => t.stop());
+        devices = await navigator.mediaDevices.enumerateDevices();
+        cams = devices.filter(d => d.kind === 'videoinput');
+      }
+      return cams.filter(c => !VIRTUAL_CAM.test(c.label));
+    }
+
+    async function openCamera() {
+      const cams = await listDeviceCameras();
+      if (!cams.length) throw new Error('NO_DEVICE_CAMERA');
+      const cam = cams.find(c => c.deviceId === selectedCameraId)
+        || cams.find(c => /front|user|depan|integrated|built-in|internal|facetime/i.test(c.label))
+        || cams[0];
+      selectedCameraId = cam.deviceId;
+      try { localStorage.setItem('camera_id', cam.deviceId); } catch (e) {}
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: cam.deviceId }, width: 640, height: 480 }
+      });
+      const sel = document.getElementById('setting-camera');
+      if (sel) {
+        sel.innerHTML = cams.map((c, i) =>
+          `<option value="${c.deviceId}" ${c.deviceId === cam.deviceId ? 'selected' : ''}>${c.label || 'Kamera ' + (i + 1)}</option>`
+        ).join('');
+      }
+      return stream;
+    }
+
+    async function changeCamera(deviceId) {
+      if (!deviceId) return;
+      selectedCameraId = deviceId;
+      try { localStorage.setItem('camera_id', deviceId); } catch (e) {}
+      if (setupStream) { setupStream.getTracks().forEach(t => t.stop()); setupStream = null; }
+      await requestCameraPermission();
+    }
+
     async function requestCameraPermission() {
       try {
         if (!setupStream) {
-          setupStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+          setupStream = await openCamera();
         }
         document.getElementById('setup-webcam').srcObject = setupStream;
         const badge = document.getElementById('camera-status-badge');
         badge.innerText = 'Kamera Mirroring Aktif!';
         badge.className = 'cam-badge cam-badge-on';
       } catch(err) {
-        alert('Gagal mengakses kamera. Pastikan izin kamera diizinkan oleh browser.');
+        alert(err && err.message === 'NO_DEVICE_CAMERA' ? 'Kamera bawaan perangkat tidak ditemukan. Kamera virtual (DroidCam, OBS, dll.) tidak digunakan.' : 'Gagal mengakses kamera. Pastikan izin kamera diizinkan oleh browser.');
       }
     }
 
@@ -751,7 +800,7 @@
       try {
         const video = document.getElementById('webcam');
         if (!setupStream) {
-          setupStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+          setupStream = await openCamera();
         }
         video.srcObject = setupStream;
         startGameTrackingLoop();
