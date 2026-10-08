@@ -188,13 +188,27 @@
   <script src="firebase-config.js"></script>
   <script>
     /* ===== FIREBASE (Firestore + Authentication) ===== */
-    firebase.initializeApp(window.FIREBASE_CONFIG);
-    const db = firebase.firestore();
-    const auth = firebase.auth();
-    const QUESTIONS = db.collection('questions');
+    let db = null, auth = null, QUESTIONS = null, FIREBASE_ERROR = '';
+    (function initFirebase() {
+      try {
+        if (typeof firebase === 'undefined') throw new Error('SDK Firebase gagal dimuat. Periksa koneksi internet.');
+        const cfg = window.FIREBASE_CONFIG;
+        if (!cfg) throw new Error('File firebase-config.js tidak terbaca. Pastikan file itu ada di repo GitHub (satu folder dengan index.html) dengan nama persis "firebase-config.js".');
+        if (!cfg.apiKey || String(cfg.apiKey).startsWith('ISI_') || String(cfg.projectId).startsWith('ISI_')) throw new Error('firebase-config.js masih berisi "ISI_...". Ganti dengan config asli dari Firebase, lalu upload ulang.');
+        firebase.initializeApp(cfg);
+        db = firebase.firestore();
+        auth = firebase.auth();
+        QUESTIONS = db.collection('questions');
+      } catch (e) {
+        FIREBASE_ERROR = e.message || String(e);
+        console.error(e);
+        window.addEventListener('DOMContentLoaded', () => alert('Konfigurasi Firebase bermasalah:\n\n' + FIREBASE_ERROR));
+      }
+    })();
 
     async function apiGet(action) {
       try {
+        if (!QUESTIONS) throw new Error(FIREBASE_ERROR);
         const snap = await QUESTIONS.orderBy('order').get();
         let list = snap.docs.map(d => ({ ...d.data(), id: d.id }));
         if (action === 'getActiveQuestions') list = list.filter(q => q.active);
@@ -204,6 +218,7 @@
 
     async function apiPost(action, data = {}) {
       try {
+        if (!QUESTIONS) return { success: false, message: 'Konfigurasi Firebase bermasalah:\n' + FIREBASE_ERROR };
         switch (action) {
           case 'authenticate': {
             const cred = auth.currentUser ? { user: auth.currentUser } : await auth.signInAnonymously();
@@ -987,7 +1002,7 @@
        LOGIKA DASHBOARD GURU / ADMIN
        ======================================================== */
     let authToken = null;
-    auth.onAuthStateChanged(user => {
+    if (auth) auth.onAuthStateChanged(user => {
       authToken = user ? user.uid : null;
       const el = document.getElementById('admin-uid');
       if (el) el.innerText = user ? user.uid : '-';
@@ -1021,7 +1036,7 @@
     }
 
     function logout() {
-      auth.signOut();
+      if (auth) auth.signOut();
       authToken = null;
       document.getElementById('dashboard-section').classList.add('hidden');
       document.getElementById('logout-btn').classList.add('hidden');
@@ -1029,7 +1044,7 @@
     }
 
     function showDashboard() {
-      if (auth.currentUser) document.getElementById('admin-uid').innerText = auth.currentUser.uid;
+      if (auth && auth.currentUser) document.getElementById('admin-uid').innerText = auth.currentUser.uid;
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
       document.getElementById('logout-btn').classList.remove('hidden');
