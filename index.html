@@ -2,8 +2,15 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>True or False — Game Kuis Kelas Interaktif</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0B1624">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="TrueFalse">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@500;700;800&family=Poppins:wght@400;600;700;900&display=swap');
@@ -340,6 +347,7 @@
         <div class="flex flex-col sm:flex-row gap-3 justify-center items-center">
           <button onclick="goToSettings()" class="btn-primary w-full sm:w-auto">⚙️ Pengaturan &amp; Mulai</button>
           <button onclick="openAdminSection()" class="btn-ghost w-full sm:w-auto inline-flex items-center justify-center">👨‍🏫 Dashboard Guru</button>
+          <button id="btn-install" onclick="installApp()" style="display:none" class="btn-ghost w-full sm:w-auto items-center justify-center">📲 Instal Aplikasi</button>
         </div>
       </div>
     </div>
@@ -371,6 +379,7 @@
             <div id="camera-status-badge" class="cam-badge cam-badge-off">Kamera Belum Aktif</div>
           </div>
           <button onclick="requestCameraPermission()" class="btn-ghost w-full text-xs py-2.5">📷 Aktifkan &amp; Tes Kamera</button>
+          <p id="camera-permission-hint" class="text-xs text-[var(--muted)] leading-relaxed"></p>
         </div>
 
         <div class="flex gap-3 pt-1">
@@ -678,6 +687,7 @@
       document.getElementById('screen-landing').classList.add('hidden');
       document.getElementById('screen-finished').classList.add('hidden');
       document.getElementById('screen-settings').classList.remove('hidden');
+      updateCameraPermissionUI();
     }
 
     function backToLanding() {
@@ -721,6 +731,7 @@
           `<option value="${c.deviceId}" ${c.deviceId === cam.deviceId ? 'selected' : ''}>${c.label || 'Kamera ' + (i + 1)}</option>`
         ).join('');
       }
+      watchStream(stream);
       return stream;
     }
 
@@ -730,6 +741,84 @@
       try { localStorage.setItem('camera_id', deviceId); } catch (e) {}
       if (setupStream) { setupStream.getTracks().forEach(t => t.stop()); setupStream = null; }
       await requestCameraPermission();
+    }
+
+    /* ===== IZIN KAMERA ===== */
+    function renderCameraPermission(state) {
+      const hint = document.getElementById('camera-permission-hint');
+      if (!hint) return;
+      const msg = {
+        granted: '✅ Izin kamera sudah diberikan untuk situs ini.',
+        prompt: 'ℹ️ Klik "Aktifkan & Tes Kamera", lalu pilih "Izinkan" saat browser meminta izin kamera.',
+        denied: '⛔ Izin kamera DIBLOKIR. Klik ikon gembok/pengaturan di sebelah alamat situs → Pengaturan situs → Kamera → Izinkan, lalu muat ulang halaman.'
+      };
+      hint.textContent = msg[state] || '';
+    }
+
+    async function updateCameraPermissionUI() {
+      const hint = document.getElementById('camera-permission-hint');
+      if (!hint) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        hint.textContent = '⛔ Browser ini tidak mendukung kamera. Gunakan Chrome terbaru dan buka lewat alamat https://.';
+        return;
+      }
+      try {
+        const st = await navigator.permissions.query({ name: 'camera' });
+        renderCameraPermission(st.state);
+        st.onchange = () => renderCameraPermission(st.state);
+      } catch (e) {
+        renderCameraPermission('prompt');
+      }
+    }
+
+    /* ===== KAMERA TETAP JALAN (tab tersembunyi / overlay / kamera terputus) ===== */
+    function watchStream(stream) {
+      stream.getVideoTracks().forEach(t => {
+        t.onended = () => { if (setupStream === stream) { setupStream = null; recoverCamera(); } };
+      });
+    }
+
+    async function recoverCamera() {
+      try {
+        if (!document.getElementById('screen-game').classList.contains('hidden')) await initGameCamera();
+        else if (!document.getElementById('screen-settings').classList.contains('hidden')) await requestCameraPermission();
+      } catch (e) { console.warn('Gagal memulihkan kamera', e); }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      ['webcam', 'setup-webcam'].forEach(id => {
+        const v = document.getElementById(id);
+        if (v && v.srcObject && v.paused) v.play().catch(() => {});
+      });
+      if (setupStream && setupStream.getVideoTracks().every(t => t.readyState === 'ended')) {
+        setupStream = null;
+        recoverCamera();
+      }
+    });
+
+    /* ===== INSTAL APLIKASI (PWA) ===== */
+    let deferredInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      const b = document.getElementById('btn-install');
+      if (b) b.style.display = 'inline-flex';
+    });
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      const b = document.getElementById('btn-install');
+      if (b) b.style.display = 'none';
+    });
+    async function installApp() {
+      if (!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      document.getElementById('btn-install').style.display = 'none';
+    }
+    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW gagal', e)));
     }
 
     async function requestCameraPermission() {
@@ -742,7 +831,13 @@
         badge.innerText = 'Kamera Mirroring Aktif!';
         badge.className = 'cam-badge cam-badge-on';
       } catch(err) {
-        alert(err && err.message === 'NO_DEVICE_CAMERA' ? 'Kamera bawaan perangkat tidak ditemukan. Kamera virtual (DroidCam, OBS, dll.) tidak digunakan.' : 'Gagal mengakses kamera. Pastikan izin kamera diizinkan oleh browser.');
+        const n = err && err.name;
+        let m = 'Gagal mengakses kamera. Pastikan izin kamera diizinkan oleh browser.';
+        if (err && err.message === 'NO_DEVICE_CAMERA') m = 'Kamera bawaan perangkat tidak ditemukan. Kamera virtual (DroidCam, OBS, dll.) tidak digunakan.';
+        else if (n === 'NotAllowedError' || n === 'SecurityError') m = 'Izin kamera ditolak atau diblokir.\n\nKlik ikon gembok di sebelah alamat situs → Izin → Kamera → Izinkan, lalu muat ulang.\n\nDi Android, jika muncul "Screen overlay detected", matikan aplikasi yang menampilkan overlay (filter layar, pelindung mata, chat head) lalu coba lagi.';
+        else if (n === 'NotReadableError') m = 'Kamera sedang dipakai aplikasi lain (mis. Zoom/Meet/aplikasi kamera). Tutup aplikasi itu lalu coba lagi.';
+        alert(m);
+        updateCameraPermissionUI();
       }
     }
 
