@@ -110,12 +110,13 @@
       width: 50%; height: 100%;
       display: flex; flex-direction: column; justify-content: space-between;
       padding: 0.75rem 1rem 3rem;
+      transition: background 0.3s ease;
     }
     .zone-a-base { border-right: 3px dashed rgba(255,92,92,0.35); background: rgba(255,92,92,0.06); }
     .zone-b-base { background: rgba(51,209,125,0.06); }
     .zone-state-correct { background: rgba(51,209,125,0.38) !important; box-shadow: inset 0 0 0 3px rgba(51,209,125,0.7); }
     .zone-state-wrong { background: rgba(255,92,92,0.38) !important; }
-    .zone-state-off { background: rgba(0,0,0,0.6) !important; box-shadow: none !important; }
+    .zone-state-off { background: rgba(0,0,0,0.65) !important; box-shadow: none !important; }
     .zone-state-off .zone-tag, .zone-state-off span { opacity: 0.35; }
 
     .zone-tag { font-weight: 800; font-size: 0.75rem; padding: 0.35rem 0.8rem; clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px); }
@@ -195,59 +196,150 @@
   <script src="firebase-config.js"></script>
   <script>
     /* ===== FIREBASE (Firestore + Authentication) ===== */
-    let db = null, auth = null, QUESTIONS = null, FIREBASE_ERROR = '';
+    let db = null, auth = null, FIREBASE_ERROR = '';
     (function initFirebase() {
       try {
         if (typeof firebase === 'undefined') throw new Error('SDK Firebase gagal dimuat. Periksa koneksi internet.');
         const cfg = window.FIREBASE_CONFIG;
-        if (!cfg) throw new Error('File firebase-config.js tidak terbaca. Pastikan file itu ada di repo GitHub (satu folder dengan index.html) dengan nama persis "firebase-config.js".');
-        if (!cfg.apiKey || String(cfg.apiKey).startsWith('ISI_') || String(cfg.projectId).startsWith('ISI_')) throw new Error('firebase-config.js masih berisi "ISI_...". Ganti dengan config asli dari Firebase, lalu upload ulang.');
+        if (!cfg) throw new Error('File firebase-config.js tidak terbaca. Pastikan file itu ada di folder proyek dengan nama "firebase-config.js".');
+        if (!cfg.apiKey || String(cfg.apiKey).startsWith('ISI_') || String(cfg.projectId).startsWith('ISI_')) {
+          throw new Error('firebase-config.js masih berisi "ISI_...". Ganti dengan config asli dari Firebase Console.');
+        }
         firebase.initializeApp(cfg);
         db = firebase.firestore();
         auth = firebase.auth();
-        QUESTIONS = db.collection('questions');
       } catch (e) {
         FIREBASE_ERROR = e.message || String(e);
-        console.error(e);
-        window.addEventListener('DOMContentLoaded', () => alert('Konfigurasi Firebase bermasalah:\n\n' + FIREBASE_ERROR));
+        console.warn('Firebase init notice:', FIREBASE_ERROR);
       }
     })();
 
-    async function apiGet(action) {
+    /* ===== MANAJEMEN AKUN & PEMISAHAN DATABASE PER-USER ===== */
+    function getActiveTeacherUid() {
+      const params = new URLSearchParams(window.location.search);
+      const paramUid = params.get('guru') || params.get('uid');
+      if (paramUid) return paramUid;
+
+      if (auth && auth.currentUser) return auth.currentUser.uid;
+
       try {
-        if (!QUESTIONS) throw new Error(FIREBASE_ERROR);
-        const snap = await QUESTIONS.orderBy('order').get();
+        const saved = localStorage.getItem('active_teacher_uid');
+        if (saved) return saved;
+      } catch (e) {}
+
+      return null;
+    }
+
+    function getActiveTeacherEmail() {
+      if (auth && auth.currentUser && auth.currentUser.email) return auth.currentUser.email;
+      try {
+        return localStorage.getItem('active_teacher_email') || '';
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function getQuestionsCollection(targetUid = null) {
+      if (!db) return null;
+      const uid = targetUid || getActiveTeacherUid();
+      if (uid) {
+        // Database terisolasi per akun guru di subkoleksi: users/{uid}/questions
+        return db.collection('users').doc(uid).collection('questions');
+      }
+      // Cadangan koleksi root jika belum ada akun guru dipilih
+      return db.collection('questions');
+    }
+
+    async function apiGet(action, options = {}) {
+      try {
+        if (!db) return [];
+        const isDashboard = (action === 'getQuestions');
+        const targetUid = options.uid || (isDashboard ? (auth && auth.currentUser && auth.currentUser.uid) : getActiveTeacherUid());
+
+        if (isDashboard && !targetUid) return [];
+
+        const ref = getQuestionsCollection(targetUid);
+        if (!ref) return [];
+
+        let snap;
+        try {
+          snap = await ref.orderBy('order').get();
+        } catch (err) {
+          snap = await ref.get();
+        }
+
         let list = snap.docs.map(d => ({ ...d.data(), id: d.id }));
-        if (action === 'getActiveQuestions') list = list.filter(q => q.active);
+        list.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+
+        if (action === 'getActiveQuestions') {
+          list = list.filter(q => q.active !== false);
+        }
         return list;
-      } catch (e) { console.error(e); return []; }
+      } catch (e) {
+        console.warn('apiGet notice:', e.message || e);
+        return [];
+      }
     }
 
     async function apiPost(action, data = {}) {
       try {
-        if (!QUESTIONS) return { success: false, message: 'Konfigurasi Firebase bermasalah:\n' + FIREBASE_ERROR };
+        if (!db) return { success: false, message: 'Database Firebase belum terhubung:\n' + FIREBASE_ERROR };
+        const user = auth && auth.currentUser;
+
         switch (action) {
           case 'authenticate': {
             const cred = await auth.signInWithEmailAndPassword(data.email, data.password);
+            try {
+              localStorage.setItem('active_teacher_uid', cred.user.uid);
+              localStorage.setItem('active_teacher_email', cred.user.email || '');
+            } catch(e) {}
+            // Simpan profil guru di Firestore
+            if (db) {
+              db.collection('users').doc(cred.user.uid).set({
+                email: cred.user.email || '',
+                lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+              }, { merge: true }).catch(() => {});
+            }
             return { success: true, token: cred.user.uid };
           }
+
           case 'createQuestion': {
+            if (!user) return { success: false, message: 'Sesi login telah berakhir. Silakan login kembali.' };
+            const userDoc = db.collection('users').doc(user.uid);
             const { id, ...payload } = data.payload;
-            await QUESTIONS.add({ ...payload, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+            await userDoc.collection('questions').add({
+              ...payload,
+              authorUid: user.uid,
+              authorEmail: user.email || '',
+              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            await userDoc.set({
+              email: user.email || '',
+              lastActive: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
             return { success: true };
           }
+
           case 'updateQuestion': {
+            if (!user) return { success: false, message: 'Sesi login telah berakhir. Silakan login kembali.' };
             const { id, ...payload } = data.payload;
-            await QUESTIONS.doc(id).set(payload, { merge: true });
+            await db.collection('users').doc(user.uid).collection('questions').doc(id).set({
+              ...payload,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
             return { success: true };
           }
-          case 'deleteQuestion':
-            await QUESTIONS.doc(data.id).delete();
+
+          case 'deleteQuestion': {
+            if (!user) return { success: false, message: 'Sesi login telah berakhir. Silakan login kembali.' };
+            await db.collection('users').doc(user.uid).collection('questions').doc(data.id).delete();
             return { success: true };
+          }
+
           case 'uploadImage': {
-            // Gambar disimpan sebagai data-URL langsung di dokumen soal (tanpa Firebase Storage, gratis).
             const url = `data:${data.payload.mimeType};base64,${data.payload.data}`;
-            if (url.length > 750000) return { success: false, message: 'Gambar terlalu besar. Gunakan gambar yang lebih kecil.' };
+            if (url.length > 750000) return { success: false, message: 'Gambar terlalu besar (maksimal ~500KB).' };
             return { success: true, url };
           }
         }
@@ -256,18 +348,14 @@
         console.error(e);
         const code = e.code || 'unknown';
         const hints = {
-          'auth/operation-not-allowed': 'Email/Password belum diaktifkan. Firebase Console > Authentication > Sign-in method > Email/Password > Enable.',
+          'auth/operation-not-allowed': 'Email/Password belum diaktifkan di Firebase Console > Authentication > Sign-in method.',
           'auth/invalid-credential': 'Email atau password salah.',
           'auth/wrong-password': 'Email atau password salah.',
-          'auth/user-not-found': 'Email belum terdaftar. Buat user di Firebase Console > Authentication > Users > Add user.',
+          'auth/user-not-found': 'Email belum terdaftar. Buat user di Firebase Console > Authentication > Users.',
           'auth/invalid-email': 'Format email tidak valid.',
-          'auth/too-many-requests': 'Terlalu banyak percobaan. Tunggu beberapa menit lalu coba lagi.',
-          'auth/unauthorized-domain': 'Domain belum diizinkan. Firebase Console > Authentication > Settings > Authorized domains > tambahkan ' + location.hostname,
-          'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'API key salah. Periksa isi firebase-config.js.',
-          'auth/invalid-api-key': 'API key salah. Periksa isi firebase-config.js.',
-          'auth/configuration-not-found': 'Authentication belum diaktifkan. Klik Get started di menu Authentication.',
-          'auth/network-request-failed': 'Koneksi internet bermasalah.',
-          'permission-denied': 'Tidak punya izin menulis. Pastikan email guru di Firestore Rules sama persis dengan email login, lalu Publish.'
+          'auth/too-many-requests': 'Terlalu banyak percobaan. Tunggu beberapa saat lalu coba lagi.',
+          'auth/unauthorized-domain': 'Domain belum diizinkan di Firebase Console > Authentication > Settings > Authorized domains.',
+          'permission-denied': 'Izin ditolak oleh Firestore Rules. Setiap akun hanya diizinkan mengelola database soal miliknya sendiri.'
         };
         return { success: false, message: (hints[code] || (e.message || 'Terjadi kesalahan.')) + '\n\n[kode: ' + code + ']' };
       }
@@ -299,14 +387,15 @@
       init() {
         if (!this.ctx) {
           const AudioContext = window.AudioContext || window.webkitAudioContext;
-          this.ctx = new AudioContext();
+          if (AudioContext) this.ctx = new AudioContext();
         }
-        if (this.ctx.state === 'suspended') { this.ctx.resume(); }
+        if (this.ctx && this.ctx.state === 'suspended') { this.ctx.resume(); }
       }
       playTone(freq, type, duration, vol = 0.1) {
         if (!this.enabled) return;
         try {
           this.init();
+          if (!this.ctx) return;
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
           osc.type = type;
@@ -326,6 +415,35 @@
       playFinish() { [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => { setTimeout(() => this.playTone(f, 'triangle', 0.25), i * 150); }); }
     }
     const sound = new SoundEngine();
+
+    function showScreen(screenId) {
+      const screens = ['screen-landing', 'screen-settings', 'screen-game', 'screen-finished', 'screen-admin'];
+      screens.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          if (id === screenId) el.classList.remove('hidden');
+          else el.classList.add('hidden');
+        }
+      });
+    }
+
+    function copyTeacherGameLink() {
+      const uid = (auth && auth.currentUser && auth.currentUser.uid) || getActiveTeacherUid();
+      if (!uid) {
+        alert('Belum ada akun guru yang login atau dipilih.\nSilakan login terlebih dahulu di Dashboard Guru.');
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('guru', uid);
+      const link = url.toString();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).then(() => {
+          alert('✅ Link kuis akun Anda berhasil disalin:\n\n' + link + '\n\nBuka link ini di komputer kelas/proyektor agar otomatis memainkan bank soal milik akun Anda.');
+        }).catch(() => prompt('Salin link kuis akun Anda berikut:', link));
+      } else {
+        prompt('Salin link kuis akun Anda berikut:', link);
+      }
+    }
   </script>
 
   <!-- APP CONTAINER -->
@@ -335,8 +453,15 @@
     <div id="screen-landing" class="flex-1 min-h-0 flex flex-col items-center justify-center p-6 text-center hero-bg relative overflow-hidden">
       <div class="court-divider hidden md:block"></div>
       <div class="max-w-xl w-full panel-cut p-8 md:p-10 relative">
-        <h1 class="display-font text-4xl md:text-5xl text-[var(--chalk)] mb-3">TRUE OR FALSE GAME</h1>
-        <div class="w-14 h-1 bg-[var(--gold)] mx-auto mb-4"></div>
+        <h1 class="display-font text-4xl md:text-5xl text-[var(--chalk)] mb-2">TRUE OR FALSE GAME</h1>
+        <div class="w-14 h-1 bg-[var(--gold)] mx-auto mb-3"></div>
+
+        <!-- Info Database Akun Aktif -->
+        <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-xs text-[var(--muted)] mb-5">
+          <span>📚 Database Soal:</span>
+          <span id="active-account-name" class="font-extrabold text-[var(--gold)]">Memuat akun...</span>
+        </div>
+
         <p class="text-[var(--muted)] text-sm mb-6 max-w-md mx-auto">Seluruh siswa bergerak bersamaan di depan kamera untuk menjawab — tidak perlu perangkat apa pun di tangan.</p>
 
         <div class="flex items-center justify-center gap-3 mb-7 flex-wrap">
@@ -357,8 +482,21 @@
       <div class="max-w-lg w-full panel-cut p-6 space-y-5 my-auto">
         <h2 class="display-font text-3xl text-center text-[var(--chalk)]">Pengaturan Game &amp; Kamera</h2>
 
+        <!-- Status Database Akun Khusus -->
+        <div class="bg-[var(--panel-soft)] border border-white/10 rounded-xl p-3.5 text-xs space-y-2">
+          <div class="flex justify-between items-center">
+            <span class="font-extrabold text-[var(--muted)] uppercase tracking-wide">Database Soal Guru</span>
+            <span id="settings-account-badge" class="font-bold text-[var(--gold)]">Soal Akun Guru</span>
+          </div>
+          <p id="settings-account-desc" class="text-slate-400 leading-relaxed">Soal kuis yang dimainkan otomatis disesuaikan dengan akun guru yang sedang aktif.</p>
+          <div class="flex gap-2 pt-1 flex-wrap">
+            <button type="button" onclick="copyTeacherGameLink()" class="btn-ghost text-xs py-1.5 px-3">🔗 Salin Link Kuis</button>
+            <button type="button" onclick="openAdminSection()" class="btn-ghost text-xs py-1.5 px-3">👤 Kelola Soal di Dashboard</button>
+          </div>
+        </div>
+
         <div>
-          <label class="block text-xs font-extrabold text-[var(--muted)] mb-2 uppercase tracking-wide">Durasi jawab per soal (detik)</label>
+          <label class="block text-xs font-extrabold text-[var(--muted)] mb-2 uppercase tracking-wide">Durasi jawab default per soal (detik)</label>
           <select id="setting-duration" class="fresh-select w-full rounded-lg px-4 py-2.5 text-sm">
             <option value="5">5 Detik (Cepat)</option>
             <option value="10" selected>10 Detik (Standar)</option>
@@ -492,12 +630,18 @@
 
     <!-- 5. DASHBOARD GURU / ADMIN SECTION -->
     <div id="screen-admin" class="hidden flex-1 min-h-0 flex flex-col bg-slate-900 font-poppins overflow-y-auto">
-      <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center shadow-lg">
+      <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex flex-wrap justify-between items-center gap-4 shadow-lg">
         <div class="flex items-center gap-3">
           <span class="bg-indigo-600 text-white p-2 rounded-xl font-black">👨‍🏫</span>
-          <h1 class="text-xl font-bold">Dashboard Guru &amp; Manajemen Soal</h1>
+          <div>
+            <h1 class="text-xl font-bold">Dashboard Guru</h1>
+            <p id="admin-user-email" class="text-xs text-indigo-300 font-mono"></p>
+          </div>
         </div>
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-3 flex-wrap">
+          <button onclick="copyTeacherGameLink()" class="bg-indigo-700/80 hover:bg-indigo-600 text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5 text-white">
+            <span>🔗 SALIN LINK KUIS SAYA</span>
+          </button>
           <button onclick="closeAdminSection()" class="bg-slate-700 hover:bg-slate-600 text-xs font-semibold px-4 py-2 rounded-xl transition">🎮 KEMBALI KE GAME</button>
           <button id="logout-btn" onclick="logout()" class="hidden bg-red-900/60 hover:bg-red-800 text-xs font-semibold px-4 py-2 rounded-xl transition text-red-200">🔒 KELUAR</button>
         </div>
@@ -505,9 +649,9 @@
 
       <main class="flex-1 max-w-7xl w-full mx-auto p-6">
         <!-- LOGIN SECTION -->
-        <div id="login-section" class="max-w-md mx-auto mt-16 bg-slate-800/90 border border-slate-700 p-8 rounded-3xl shadow-2xl">
+        <div id="login-section" class="max-w-md mx-auto mt-14 bg-slate-800/90 border border-slate-700 p-8 rounded-3xl shadow-2xl">
           <h2 class="text-2xl font-black mb-2 text-center">LOGIN GURU</h2>
-          <p class="text-slate-400 text-xs text-center mb-6">Masuk dengan akun guru untuk mengelola soal kuis.</p>
+          <p class="text-slate-400 text-xs text-center mb-6">Masuk untuk mengelola bank soal khusus akun Anda secara terpisah.</p>
           <form onsubmit="handleLogin(event)" class="space-y-4">
             <div>
               <label class="block text-xs font-bold text-slate-300 mb-1">EMAIL GURU</label>
@@ -526,16 +670,19 @@
 
         <!-- DASHBOARD SECTION -->
         <div id="dashboard-section" class="hidden space-y-6">
-          <div class="flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-800/60 border border-slate-700 p-6 rounded-3xl">
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-800/60 border border-slate-700 p-6 rounded-3xl">
             <div>
-              <h2 class="text-xl font-black">Daftar Soal Kuis</h2>
-              <p class="text-slate-400 text-xs">Kelola pertanyaan, gambar soal, pilihan jawaban, dan durasi kuis kelas.</p>
+              <div class="flex items-center gap-2">
+                <h2 class="text-xl font-black">Daftar Soal Akun Anda</h2>
+                <span class="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold px-2.5 py-0.5 rounded-full">Database Terpisah</span>
+              </div>
+              <p class="text-slate-400 text-xs mt-1">Soal-soal di bawah ini hanya dapat dilihat dan diedit oleh akun Anda.</p>
             </div>
-            <div class="flex gap-3">
-              <button onclick="openModal()" class="bg-indigo-600 hover:bg-indigo-500 text-sm font-bold px-5 py-3 rounded-2xl shadow transition flex items-center gap-2">
+            <div class="flex flex-wrap gap-2.5">
+              <button onclick="openModal()" class="bg-indigo-600 hover:bg-indigo-500 text-xs md:text-sm font-bold px-5 py-2.5 rounded-2xl shadow transition flex items-center gap-2">
                 <span>➕ BUAT SOAL BARU</span>
               </button>
-              <button onclick="closeAdminSection()" class="bg-emerald-600 hover:bg-emerald-500 text-sm font-bold px-5 py-3 rounded-2xl shadow transition flex items-center gap-2">
+              <button onclick="closeAdminSection()" class="bg-emerald-600 hover:bg-emerald-500 text-xs md:text-sm font-bold px-5 py-2.5 rounded-2xl shadow transition flex items-center gap-2">
                 <span>🚀 BUKA GAME</span>
               </button>
             </div>
@@ -550,7 +697,7 @@
                     <th class="p-4">Pertanyaan</th>
                     <th class="p-4">Gambar</th>
                     <th class="p-4">Pilihan A / B</th>
-                    <th class="p-4">Jawaban</th>
+                    <th class="p-4">Kunci</th>
                     <th class="p-4">Timer</th>
                     <th class="p-4">Status</th>
                     <th class="p-4 text-center">Aksi</th>
@@ -655,23 +802,96 @@
     let detectionAnimId = null;
     let quizHistory = [];
 
+    // Deteksi optical motion & background
+    let lastFrameData = null;
+    let bgFrameData = null;
+    let smoothLeft = 0;
+    let smoothRight = 0;
+
+    function resetDetection() {
+      lastFrameData = null;
+      bgFrameData = null;
+      smoothLeft = 0;
+      smoothRight = 0;
+      zoneAScore = 0;
+      zoneBScore = 0;
+    }
+
     const FALLBACK_QUESTIONS = [
-      { id: 1, question: "Matahari terbit dari arah barat?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Matahari tampak terbit dari timur.", duration: 10 }
+      { id: 'fb-1', question: "Matahari terbit dari arah barat?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "A", explanation: "Matahari terbit dari arah timur dan tenggelam di sebelah barat.", duration: 10, active: true, order: 1 },
+      { id: 'fb-2', question: "Air mendidih pada suhu 100°C pada tekanan atmosfer normal?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Titik didih air murni adalah 100 derajat Celsius pada 1 atm.", duration: 10, active: true, order: 2 },
+      { id: 'fb-3', question: "Indonesia merupakan negara kepulauan terbesar di dunia?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "Indonesia memiliki lebih dari 17.000 pulau, menjadikannya negara kepulauan terbesar.", duration: 10, active: true, order: 3 },
+      { id: 'fb-4', question: "Mamalia seperti paus dan lumba-lumba bernapas dengan insang?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "A", explanation: "Paus dan lumba-lumba adalah mamalia yang bernapas dengan paru-paru.", duration: 10, active: true, order: 4 },
+      { id: 'fb-5', question: "Ibu kota Nusantara (IKN) terletak di Pulau Kalimantan?", optionA: "SALAH", optionB: "BENAR", correctAnswer: "B", explanation: "IKN Nusantara berlokasi di Provinsi Kalimantan Timur.", duration: 10, active: true, order: 5 }
     ];
 
-    window.addEventListener('DOMContentLoaded', async () => {
+    async function updateAccountBadges() {
+      const activeUid = getActiveTeacherUid();
+      const activeEmail = getActiveTeacherEmail();
+      const nameEl = document.getElementById('active-account-name');
+      const badgeEl = document.getElementById('settings-account-badge');
+      const descEl = document.getElementById('settings-account-desc');
+      const adminEmailEl = document.getElementById('admin-user-email');
+
+      let label = 'Bank Soal Default';
+      let desc = 'Menggunakan bank soal default. Login di Dashboard Guru untuk mengelola bank soal khusus akun Anda.';
+
+      if (auth && auth.currentUser) {
+        label = auth.currentUser.email || 'Akun Guru Aktif';
+        desc = `Bank soal aktif milik akun: ${label}`;
+        if (adminEmailEl) adminEmailEl.innerText = label;
+      } else if (activeEmail) {
+        label = activeEmail;
+        desc = `Bank soal aktif milik akun: ${label}`;
+      } else if (activeUid) {
+        label = `Guru [${activeUid.substring(0, 6)}...]`;
+        desc = `Bank soal guru ID: ${activeUid}`;
+        try {
+          if (db) {
+            const uDoc = await db.collection('users').doc(activeUid).get();
+            if (uDoc.exists && uDoc.data().email) {
+              label = uDoc.data().email;
+              desc = `Bank soal aktif milik akun: ${label}`;
+              try { localStorage.setItem('active_teacher_email', label); } catch(e) {}
+            }
+          }
+        } catch(e) {}
+      }
+
+      if (nameEl) nameEl.innerText = label;
+      if (badgeEl) badgeEl.innerText = label;
+      if (descEl) descEl.innerText = desc;
+    }
+
+    async function loadActiveQuestions() {
       showLoading('Menghubungkan ke database...');
       try {
+        await updateAccountBadges();
         questions = await apiGet('getActiveQuestions');
         if (!questions || questions.length === 0) questions = FALLBACK_QUESTIONS;
       } finally {
         hideLoading();
       }
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadActiveQuestions();
 
       window.addEventListener('keydown', (e) => {
         if (gameState === 'PLAYING') {
-          if (e.key === 'ArrowLeft') { keyboardChoice = 'A'; zoneAScore = 100; zoneBScore = 0; updateSimultaneousUI(100, 0); }
-          else if (e.key === 'ArrowRight') { keyboardChoice = 'B'; zoneAScore = 0; zoneBScore = 100; updateSimultaneousUI(0, 100); }
+          if (e.key === 'ArrowLeft') {
+            keyboardChoice = 'A';
+            zoneAScore = 100;
+            zoneBScore = 0;
+            updateSimultaneousUI(100, 0);
+          } else if (e.key === 'ArrowRight') {
+            keyboardChoice = 'B';
+            zoneAScore = 0;
+            zoneBScore = 100;
+            updateSimultaneousUI(0, 100);
+          } else if (e.key === 'ArrowDown' || e.key === ' ') {
+            keyboardChoice = null;
+          }
         }
       });
     });
@@ -684,34 +904,36 @@
     function goToSettings() {
       sound.init();
       sound.playStart();
-      document.getElementById('screen-landing').classList.add('hidden');
-      document.getElementById('screen-finished').classList.add('hidden');
-      document.getElementById('screen-settings').classList.remove('hidden');
+      showScreen('screen-settings');
+      updateAccountBadges();
       updateCameraPermissionUI();
     }
 
     function backToLanding() {
       stopCameraStream();
-      document.getElementById('screen-settings').classList.add('hidden');
-      document.getElementById('screen-landing').classList.remove('hidden');
+      showScreen('screen-landing');
+      updateAccountBadges();
     }
 
-    /* ===== KAMERA PERANGKAT (kamera virtual seperti DroidCam/OBS disembunyikan) ===== */
+    /* ===== KAMERA PERANGKAT ===== */
     const VIRTUAL_CAM = /droidcam|obs|virtual|iriun|epoccam|ivcam|manycam|camo|snap camera|nvidia broadcast|xsplit|webcamoid|splitcam|vcam|e2esoft|kinoni/i;
     let selectedCameraId = null;
     try { selectedCameraId = localStorage.getItem('camera_id'); } catch (e) {}
 
     async function listDeviceCameras() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return [];
       let devices = await navigator.mediaDevices.enumerateDevices();
       let cams = devices.filter(d => d.kind === 'videoinput');
-      // Label baru tersedia setelah izin kamera diberikan
       if (cams.length && cams.every(c => !c.label)) {
-        const probe = await navigator.mediaDevices.getUserMedia({ video: true });
-        probe.getTracks().forEach(t => t.stop());
-        devices = await navigator.mediaDevices.enumerateDevices();
-        cams = devices.filter(d => d.kind === 'videoinput');
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+          probe.getTracks().forEach(t => t.stop());
+          devices = await navigator.mediaDevices.enumerateDevices();
+          cams = devices.filter(d => d.kind === 'videoinput');
+        } catch(e) {}
       }
-      return cams.filter(c => !VIRTUAL_CAM.test(c.label));
+      const realCams = cams.filter(c => !VIRTUAL_CAM.test(c.label));
+      return realCams.length > 0 ? realCams : cams;
     }
 
     async function openCamera() {
@@ -722,9 +944,21 @@
         || cams[0];
       selectedCameraId = cam.deviceId;
       try { localStorage.setItem('camera_id', cam.deviceId); } catch (e) {}
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: cam.deviceId }, width: 640, height: 480 }
-      });
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            deviceId: cam.deviceId ? { ideal: cam.deviceId } : undefined,
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          }
+        });
+      } catch (err) {
+        console.warn('Fallback ke video standar:', err);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
       const sel = document.getElementById('setting-camera');
       if (sel) {
         sel.innerHTML = cams.map((c, i) =>
@@ -739,7 +973,7 @@
       if (!deviceId) return;
       selectedCameraId = deviceId;
       try { localStorage.setItem('camera_id', deviceId); } catch (e) {}
-      if (setupStream) { setupStream.getTracks().forEach(t => t.stop()); setupStream = null; }
+      stopCameraStream();
       await requestCameraPermission();
     }
 
@@ -771,7 +1005,6 @@
       }
     }
 
-    /* ===== KAMERA TETAP JALAN (tab tersembunyi / overlay / kamera terputus) ===== */
     function watchStream(stream) {
       stream.getVideoTracks().forEach(t => {
         t.onended = () => { if (setupStream === stream) { setupStream = null; recoverCamera(); } };
@@ -826,15 +1059,21 @@
         if (!setupStream) {
           setupStream = await openCamera();
         }
-        document.getElementById('setup-webcam').srcObject = setupStream;
+        const video = document.getElementById('setup-webcam');
+        if (video) {
+          video.srcObject = setupStream;
+          video.play().catch(() => {});
+        }
         const badge = document.getElementById('camera-status-badge');
-        badge.innerText = 'Kamera Mirroring Aktif!';
-        badge.className = 'cam-badge cam-badge-on';
+        if (badge) {
+          badge.innerText = 'Kamera Mirroring Aktif!';
+          badge.className = 'cam-badge cam-badge-on';
+        }
       } catch(err) {
         const n = err && err.name;
         let m = 'Gagal mengakses kamera. Pastikan izin kamera diizinkan oleh browser.';
-        if (err && err.message === 'NO_DEVICE_CAMERA') m = 'Kamera bawaan perangkat tidak ditemukan. Kamera virtual (DroidCam, OBS, dll.) tidak digunakan.';
-        else if (n === 'NotAllowedError' || n === 'SecurityError') m = 'Izin kamera ditolak atau diblokir.\n\nKlik ikon gembok di sebelah alamat situs → Izin → Kamera → Izinkan, lalu muat ulang.\n\nDi Android, jika muncul "Screen overlay detected", matikan aplikasi yang menampilkan overlay (filter layar, pelindung mata, chat head) lalu coba lagi.';
+        if (err && err.message === 'NO_DEVICE_CAMERA') m = 'Kamera tidak ditemukan pada perangkat ini.';
+        else if (n === 'NotAllowedError' || n === 'SecurityError') m = 'Izin kamera ditolak atau diblokir.\n\nKlik ikon gembok di sebelah alamat situs → Izin → Kamera → Izinkan, lalu muat ulang.';
         else if (n === 'NotReadableError') m = 'Kamera sedang dipakai aplikasi lain (mis. Zoom/Meet/aplikasi kamera). Tutup aplikasi itu lalu coba lagi.';
         alert(m);
         updateCameraPermissionUI();
@@ -843,10 +1082,28 @@
 
     function stopCameraStream() {
       if (setupStream) {
-        setupStream.getTracks().forEach(t => t.stop());
+        try {
+          setupStream.getTracks().forEach(t => t.stop());
+        } catch(e) {}
         setupStream = null;
       }
-      if (detectionAnimId) cancelAnimationFrame(detectionAnimId);
+      ['webcam', 'setup-webcam'].forEach(id => {
+        const v = document.getElementById(id);
+        if (v) {
+          try { v.pause(); } catch(e) {}
+          v.srcObject = null;
+        }
+      });
+      const badge = document.getElementById('camera-status-badge');
+      if (badge) {
+        badge.innerText = 'Kamera Belum Aktif';
+        badge.className = 'cam-badge cam-badge-off';
+      }
+      if (detectionAnimId) {
+        cancelAnimationFrame(detectionAnimId);
+        detectionAnimId = null;
+      }
+      resetDetection();
     }
 
     async function launchGame() {
@@ -856,21 +1113,28 @@
       const label = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = '<span class="btn-spinner"></span>Memuat soal...';
-      showLoading('Memuat soal dari database...');
+      showLoading('Memuat soal kuis...');
 
       try {
         sound.init();
         globalDuration = Number(document.getElementById('setting-duration').value) || 10;
         quizHistory = [];
 
-        questions = await apiGet('getActiveQuestions');
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        if (preInterval) { clearInterval(preInterval); preInterval = null; }
+        if (nextTimeout) { clearTimeout(nextTimeout); nextTimeout = null; }
+
+        try {
+          questions = await apiGet('getActiveQuestions');
+        } catch(e) {
+          questions = [];
+        }
         if (!questions || questions.length === 0) questions = FALLBACK_QUESTIONS;
 
         currentIndex = 0;
-        document.getElementById('screen-settings').classList.add('hidden');
-        document.getElementById('screen-game').classList.remove('hidden');
+        showScreen('screen-game');
 
-        initGameCamera();
+        await initGameCamera();
         startPreCountdown(currentIndex);
       } finally {
         isLoading = false;
@@ -882,13 +1146,13 @@
 
     function exitGame() {
       stopCameraStream();
-      if (timerInterval) clearInterval(timerInterval);
-      clearInterval(preInterval);
-      clearTimeout(nextTimeout);
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (preInterval) { clearInterval(preInterval); preInterval = null; }
+      if (nextTimeout) { clearTimeout(nextTimeout); nextTimeout = null; }
       document.getElementById('pre-countdown-overlay').classList.add('hidden');
       gameState = 'IDLE';
-      document.getElementById('screen-game').classList.add('hidden');
-      document.getElementById('screen-landing').classList.remove('hidden');
+      showScreen('screen-landing');
+      updateAccountBadges();
     }
 
     async function initGameCamera() {
@@ -897,10 +1161,13 @@
         if (!setupStream) {
           setupStream = await openCamera();
         }
-        video.srcObject = setupStream;
+        if (video) {
+          video.srcObject = setupStream;
+          await video.play().catch(e => console.warn('Video play error:', e));
+        }
         startGameTrackingLoop();
       } catch (err) {
-        console.warn('Camera error:', err);
+        console.warn('Game camera error:', err);
       }
     }
 
@@ -911,11 +1178,21 @@
       canvasContext = canvas.getContext('2d', { willReadFrequently: true });
       if (detectionAnimId) cancelAnimationFrame(detectionAnimId);
 
+      const sampleW = 160;
+      const sampleH = 120;
+      const sampleCanvas = document.createElement('canvas');
+      sampleCanvas.width = sampleW;
+      sampleCanvas.height = sampleH;
+      const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+
       function processFrame() {
-        if (gameState === 'PLAYING' && video.readyState === video.HAVE_ENOUGH_DATA) {
-          if (!canvas.width || canvas.width !== video.videoWidth) {
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
+        if (gameState === 'PLAYING' && video.readyState >= 2) {
+          const vw = video.videoWidth || 640;
+          const vh = video.videoHeight || 480;
+
+          if (!canvas.width || canvas.width !== vw || canvas.height !== vh) {
+            canvas.width = vw;
+            canvas.height = vh;
           }
 
           canvasContext.save();
@@ -926,27 +1203,74 @@
 
           if (!keyboardChoice) {
             try {
-              const w = canvas.width, h = canvas.height;
-              const imgData = canvasContext.getImageData(0, 0, w, h);
-              let rightSideActivity = 0, leftSideActivity = 0;
-              const mid = w / 2;
-              const deadZone = w * 0.08;
+              sampleCtx.save();
+              sampleCtx.scale(-1, 1);
+              sampleCtx.drawImage(video, -sampleW, 0, sampleW, sampleH);
+              sampleCtx.restore();
 
-              for (let y = 0; y < h; y += 20) {
-                for (let x = 0; x < w; x += 20) {
-                  const idx = (y * w + x) * 4;
-                  const brightness = (imgData.data[idx] + imgData.data[idx+1] + imgData.data[idx+2]) / 3;
-                  if (x < mid - deadZone) rightSideActivity += brightness;
-                  else if (x > mid + deadZone) leftSideActivity += brightness;
+              const currentImg = sampleCtx.getImageData(0, 0, sampleW, sampleH);
+              const current = currentImg.data;
+
+              if (!bgFrameData || bgFrameData.length !== current.length) {
+                bgFrameData = new Uint8ClampedArray(current);
+                lastFrameData = new Uint8ClampedArray(current);
+              } else {
+                let motionLeft = 0;
+                let motionRight = 0;
+                const mid = sampleW / 2;
+                const deadZone = sampleW * 0.10;
+
+                for (let y = 0; y < sampleH; y += 2) {
+                  const rowOffset = y * sampleW;
+                  for (let x = 0; x < sampleW; x += 2) {
+                    const idx = (rowOffset + x) * 4;
+                    const r = current[idx];
+                    const g = current[idx + 1];
+                    const b = current[idx + 2];
+
+                    const diffMotion = Math.abs(r - lastFrameData[idx]) +
+                                       Math.abs(g - lastFrameData[idx + 1]) +
+                                       Math.abs(b - lastFrameData[idx + 2]);
+
+                    const diffBg = Math.abs(r - bgFrameData[idx]) +
+                                   Math.abs(g - bgFrameData[idx + 1]) +
+                                   Math.abs(b - bgFrameData[idx + 2]);
+
+                    const isActive = (diffMotion > 26) || (diffBg > 46);
+
+                    if (isActive) {
+                      if (x < mid - deadZone) {
+                        motionLeft++;
+                      } else if (x > mid + deadZone) {
+                        motionRight++;
+                      }
+                    }
+
+                    bgFrameData[idx]     = (bgFrameData[idx]     * 31 + r) >> 5;
+                    bgFrameData[idx + 1] = (bgFrameData[idx + 1] * 31 + g) >> 5;
+                    bgFrameData[idx + 2] = (bgFrameData[idx + 2] * 31 + b) >> 5;
+                  }
                 }
+
+                lastFrameData.set(current);
+
+                smoothLeft = smoothLeft * 0.75 + motionLeft * 0.25;
+                smoothRight = smoothRight * 0.75 + motionRight * 0.25;
+
+                const totalActivity = smoothLeft + smoothRight;
+                if (totalActivity < 10) {
+                  zoneAScore = 0;
+                  zoneBScore = 0;
+                } else {
+                  zoneAScore = Math.round((smoothLeft / totalActivity) * 100);
+                  zoneBScore = 100 - zoneAScore;
+                }
+
+                updateSimultaneousUI(zoneAScore, zoneBScore);
               }
-
-              const total = rightSideActivity + leftSideActivity || 1;
-              zoneBScore = Math.round((rightSideActivity / total) * 100);
-              zoneAScore = Math.round((leftSideActivity / total) * 100);
-
-              updateSimultaneousUI(zoneAScore, zoneBScore);
-            } catch(e) {}
+            } catch(e) {
+              console.warn('Tracking process error:', e);
+            }
           }
         }
         detectionAnimId = requestAnimationFrame(processFrame);
@@ -955,25 +1279,39 @@
     }
 
     function updateSimultaneousUI(scoreA, scoreB) {
-      document.getElementById('activity-a').innerText = `Aktivitas: ${scoreA}%`;
-      document.getElementById('activity-b').innerText = `Aktivitas: ${scoreB}%`;
+      const elA = document.getElementById('activity-a');
+      const elB = document.getElementById('activity-b');
+      if (elA) elA.innerText = `Aktivitas: ${scoreA}%`;
+      if (elB) elB.innerText = `Aktivitas: ${scoreB}%`;
 
       const statusEl = document.getElementById('position-status');
-      if (scoreB > scoreA + 5) {
-        statusEl.innerText = `STATUS: Mayoritas siswa di KANAN/BENAR (${scoreB}%)`;
-      } else if (scoreA > scoreB + 5) {
-        statusEl.innerText = `STATUS: Mayoritas siswa di KIRI/SALAH (${scoreA}%)`;
+      if (!statusEl) return;
+
+      if (scoreA === 0 && scoreB === 0) {
+        statusEl.innerText = `STATUS: Silakan siswa bergerak ke sisi Kiri (Salah) atau Kanan (Benar)...`;
+      } else if (scoreB > scoreA + 10) {
+        statusEl.innerText = `STATUS: Mayoritas siswa di KANAN / BENAR (${scoreB}%)`;
+      } else if (scoreA > scoreB + 10) {
+        statusEl.innerText = `STATUS: Mayoritas siswa di KIRI / SALAH (${scoreA}%)`;
       } else {
-        statusEl.innerText = `STATUS: Siswa tersebar merata di kedua zona`;
+        statusEl.innerText = `STATUS: Siswa tersebar seimbang di kedua zona (${scoreA}% vs ${scoreB}%)`;
       }
     }
 
     function startPreCountdown(index) {
       if (index >= questions.length) { finishQuiz(); return; }
       if (preInterval) clearInterval(preInterval);
+      if (timerInterval) clearInterval(timerInterval);
       gameState = 'PRE_COUNTDOWN';
-      if (questions[index] && questions[index].imageUrl) { new Image().src = questions[index].imageUrl; }
-      document.getElementById('timer-number').innerText = globalDuration;
+
+      if (questions[index] && questions[index].imageUrl) {
+        const preImg = new Image();
+        preImg.src = questions[index].imageUrl;
+      }
+
+      const qDur = Number(questions[index] && questions[index].duration);
+      document.getElementById('timer-number').innerText = (qDur && qDur >= 5) ? qDur : globalDuration;
+
       const overlay = document.getElementById('pre-countdown-overlay');
       const numEl = document.getElementById('pre-countdown-num');
       overlay.classList.remove('hidden');
@@ -991,6 +1329,7 @@
           sound.playCountdown();
         } else {
           clearInterval(preInterval);
+          preInterval = null;
           overlay.classList.add('hidden');
           loadQuestion(index);
         }
@@ -999,8 +1338,7 @@
 
     function loadQuestion(index) {
       keyboardChoice = null;
-      zoneAScore = 0;
-      zoneBScore = 0;
+      resetDetection();
       const q = questions[index];
 
       document.getElementById('question-counter').innerText = `SOAL ${index + 1} / ${questions.length}`;
@@ -1027,12 +1365,16 @@
       document.getElementById('zone-a-overlay').className = 'zone-panel zone-a-base';
       document.getElementById('zone-b-overlay').className = 'zone-panel zone-b-base';
 
-      timeLeft = globalDuration;
+      const qDur = Number(q.duration);
+      timeLeft = (qDur && qDur >= 5) ? qDur : globalDuration;
+
       const timerNum = document.getElementById('timer-number');
       const timerBox = document.getElementById('timer-box');
       timerBox.classList.remove('animate-glow', 'timer-urgent');
       timerNum.innerText = timeLeft;
       gameState = 'PLAYING';
+
+      updateSimultaneousUI(0, 0);
 
       if (timerInterval) clearInterval(timerInterval);
       timerInterval = setInterval(() => {
@@ -1044,12 +1386,13 @@
         if (timeLeft <= 3 && timeLeft > 0) {
           sound.playUrgent();
           timerBox.classList.add('animate-glow', 'timer-urgent');
-        } else {
+        } else if (timeLeft > 0) {
           sound.playCountdown();
         }
 
         if (timeLeft <= 0) {
           clearInterval(timerInterval);
+          timerInterval = null;
           lockAnswer(q, index);
         }
       }, 1000);
@@ -1057,7 +1400,7 @@
 
     function normalizeAnswer(v) {
       const t = String(v || '').trim().toUpperCase();
-      if (t === 'A' || t === 'SALAH' || t === 'FALSE') return 'A';
+      if (t === 'A' || t === 'SALAH' || t === 'FALSE' || t === 'KIRI') return 'A';
       return 'B';
     }
 
@@ -1066,13 +1409,26 @@
       gameState = 'RESULT';
       sound.playNext();
       const timerBox = document.getElementById('timer-box');
-      timerBox.classList.remove('animate-glow', 'timer-urgent');
+      if (timerBox) timerBox.classList.remove('animate-glow', 'timer-urgent');
 
       const correct = normalizeAnswer(q.correctAnswer);
-      const chosen = keyboardChoice || (zoneBScore >= zoneAScore ? 'B' : 'A');
+      let chosen;
+      if (keyboardChoice) {
+        chosen = keyboardChoice;
+      } else if (zoneBScore > zoneAScore) {
+        chosen = 'B';
+      } else if (zoneAScore > zoneBScore) {
+        chosen = 'A';
+      } else {
+        chosen = (zoneAScore === 0 && zoneBScore === 0) ? null : correct;
+      }
 
-      const percentBenar = correct === 'A' ? zoneAScore : zoneBScore;
-      const percentSalah = correct === 'A' ? zoneBScore : zoneAScore;
+      const percentBenar = (zoneAScore === 0 && zoneBScore === 0)
+        ? 0
+        : (correct === 'A' ? zoneAScore : zoneBScore);
+      const percentSalah = (zoneAScore === 0 && zoneBScore === 0)
+        ? 0
+        : (correct === 'A' ? zoneBScore : zoneAScore);
 
       quizHistory.push({
         question: q.question,
@@ -1089,20 +1445,32 @@
       const zoneB = document.getElementById('zone-b-overlay');
 
       if (correct === 'A') {
-        zoneA.classList.add('zone-state-wrong');
+        zoneA.classList.add('zone-state-correct');
         zoneB.classList.add('zone-state-off');
         resA.classList.remove('hidden');
-        resA.classList.add('result-wrong', 'animate-glow');
-        resA.innerHTML = `✕ PERNYATAAN SALAH`;
+        resA.classList.add('result-correct', 'animate-glow');
+        resA.innerHTML = `✓ KUNCI: SALAH`;
+
+        resB.classList.remove('hidden');
+        resB.classList.add('result-wrong');
+        resB.innerHTML = `✕ BUKAN BENAR`;
       } else {
         zoneB.classList.add('zone-state-correct');
         zoneA.classList.add('zone-state-off');
         resB.classList.remove('hidden');
         resB.classList.add('result-correct', 'animate-glow');
-        resB.innerHTML = `✓ PERNYATAAN BENAR`;
+        resB.innerHTML = `✓ KUNCI: BENAR`;
+
+        resA.classList.remove('hidden');
+        resA.classList.add('result-wrong');
+        resA.innerHTML = `✕ BUKAN SALAH`;
       }
 
-      if (chosen === correct) sound.playCorrect(); else sound.playWrong();
+      if (chosen === correct) {
+        sound.playCorrect();
+      } else if (chosen !== null) {
+        sound.playWrong();
+      }
 
       nextTimeout = setTimeout(() => {
         currentIndex++;
@@ -1113,7 +1481,12 @@
     function finishQuiz() {
       sound.playFinish();
       stopCameraStream();
-      document.getElementById('screen-game').classList.add('hidden');
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (preInterval) { clearInterval(preInterval); preInterval = null; }
+      if (nextTimeout) { clearTimeout(nextTimeout); nextTimeout = null; }
+      gameState = 'FINISHED';
+
+      showScreen('screen-finished');
 
       const reviewContainer = document.getElementById('review-container');
       reviewContainer.innerHTML = '';
@@ -1129,7 +1502,7 @@
             <span class="review-key">Kunci: ${correctText}</span>
           </div>
           <p class="text-sm font-bold text-white mt-1">${item.question}</p>
-          ${item.imageUrl ? `<img src="${item.imageUrl}" class="max-h-24 object-contain rounded mt-1 self-start">` : ''}
+          ${item.imageUrl ? `<img src="${item.imageUrl}" class="max-h-24 object-contain rounded mt-1 self-start" alt="Gambar soal ${idx + 1}">` : ''}
           <div class="space-y-1 mt-2">
             <div class="flex justify-between text-xs font-extrabold">
               <span style="color:var(--win)">✓ Jawab Benar</span>
@@ -1146,27 +1519,49 @@
         `;
         reviewContainer.appendChild(card);
       });
-
-      document.getElementById('screen-finished').classList.remove('hidden');
     }
 
     /* ========================================================
        LOGIKA DASHBOARD GURU / ADMIN
        ======================================================== */
     let authToken = null;
-    if (auth) auth.onAuthStateChanged(user => { authToken = user ? user.uid : null; });
+    if (auth) {
+      auth.onAuthStateChanged(user => {
+        authToken = user ? user.uid : null;
+        if (user) {
+          try {
+            localStorage.setItem('active_teacher_uid', user.uid);
+            localStorage.setItem('active_teacher_email', user.email || '');
+          } catch(e) {}
+        }
+        updateAccountBadges();
+        const adminScreen = document.getElementById('screen-admin');
+        if (adminScreen && !adminScreen.classList.contains('hidden')) {
+          if (user) showDashboard();
+          else logout();
+        }
+      });
+    }
+
     let allQuestions = [];
     let uploadingImage = false;
 
     function openAdminSection() {
-      document.getElementById('screen-landing').classList.add('hidden');
-      document.getElementById('screen-admin').classList.remove('hidden');
-      if (authToken) showDashboard();
+      stopCameraStream();
+      showScreen('screen-admin');
+      updateAccountBadges();
+      if (auth && auth.currentUser) {
+        authToken = auth.currentUser.uid;
+        showDashboard();
+      } else if (authToken) {
+        showDashboard();
+      }
     }
 
     function closeAdminSection() {
-      document.getElementById('screen-admin').classList.add('hidden');
-      document.getElementById('screen-landing').classList.remove('hidden');
+      showScreen('screen-landing');
+      updateAccountBadges();
+      loadActiveQuestions();
     }
 
     async function handleLogin(e) {
@@ -1179,6 +1574,7 @@
         const res = await apiPost('authenticate', { email, password: pwd });
         if (res.success) {
           authToken = res.token;
+          await updateAccountBadges();
           showDashboard();
         } else {
           alert(res.message || 'Gagal masuk.');
@@ -1189,25 +1585,32 @@
     function logout() {
       if (auth) auth.signOut();
       authToken = null;
+      try {
+        localStorage.removeItem('active_teacher_uid');
+        localStorage.removeItem('active_teacher_email');
+      } catch(e) {}
       document.getElementById('dashboard-section').classList.add('hidden');
       document.getElementById('logout-btn').classList.add('hidden');
       document.getElementById('login-section').classList.remove('hidden');
+      updateAccountBadges();
+      loadActiveQuestions();
     }
 
     function showDashboard() {
       document.getElementById('login-section').classList.add('hidden');
       document.getElementById('dashboard-section').classList.remove('hidden');
       document.getElementById('logout-btn').classList.remove('hidden');
+      updateAccountBadges();
       loadQuestionsTable();
     }
 
     async function loadQuestionsTable() {
-      allQuestions = await withLoading('Memuat daftar soal dari database...', () => apiGet('getQuestions'));
+      allQuestions = await withLoading('Memuat daftar soal akun Anda...', () => apiGet('getQuestions'));
       const tbody = document.getElementById('question-table-body');
       tbody.innerHTML = '';
 
       if (!allQuestions || allQuestions.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400">Belum ada soal. Silakan buat soal baru.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-slate-400">Belum ada soal pada akun ini. Silakan buat soal baru.</td></tr>`;
         return;
       }
 
@@ -1215,23 +1618,26 @@
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-900/40 transition';
         const thumb = q.imageUrl
-          ? `<img src="${q.imageUrl}" alt="Gambar soal ${idx + 1}" class="h-12 w-16 object-cover rounded-lg border border-slate-600" onerror="this.replaceWith(document.createTextNode('⚠️ gagal dimuat'))">`
+          ? `<img src="${q.imageUrl}" alt="Gambar soal ${idx + 1}" class="h-12 w-16 object-cover rounded-lg border border-slate-600" onerror="this.replaceWith(document.createTextNode('⚠️ gagal'))">`
           : `<span class="text-slate-500 text-xs">—</span>`;
+        const dur = q.duration || 10;
+        const correctNorm = normalizeAnswer(q.correctAnswer);
+        const correctLabel = correctNorm === 'A' ? 'A (SALAH)' : 'B (BENAR)';
         tr.innerHTML = `
           <td class="p-4 font-mono text-slate-400">${idx + 1}</td>
-          <td class="p-4 font-semibold max-w-xs truncate">${q.question}</td>
+          <td class="p-4 font-semibold max-w-xs truncate">${q.question || ''}</td>
           <td class="p-4">${thumb}</td>
-          <td class="p-4 text-xs text-slate-300">A: ${q.optionA} / B: ${q.optionB}</td>
-          <td class="p-4 font-bold text-indigo-400">${q.correctAnswer}</td>
-          <td class="p-4 font-mono">${q.duration}s</td>
+          <td class="p-4 text-xs text-slate-300">A: ${q.optionA || 'SALAH'} / B: ${q.optionB || 'BENAR'}</td>
+          <td class="p-4 font-bold text-indigo-400">${correctLabel}</td>
+          <td class="p-4 font-mono">${dur}s</td>
           <td class="p-4">
-            <span class="px-2 py-1 rounded text-xs font-semibold ${q.active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}">
-              ${q.active ? 'Aktif' : 'Nonaktif'}
+            <span class="px-2 py-1 rounded text-xs font-semibold ${q.active !== false ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}">
+              ${q.active !== false ? 'Aktif' : 'Nonaktif'}
             </span>
           </td>
           <td class="p-4 text-center space-x-2">
             <button onclick="editQuestion(${idx})" class="bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded text-xs font-semibold">Edit</button>
-            <button onclick="deleteQuestion('${q.id}')" class="bg-red-900/50 hover:bg-red-800 text-red-200 px-3 py-1 rounded text-xs font-semibold">Hapus</button>
+            <button onclick="confirmDeleteQuestion(${idx})" class="bg-red-900/50 hover:bg-red-800 text-red-200 px-3 py-1 rounded text-xs font-semibold">Hapus</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -1246,6 +1652,7 @@
         document.getElementById('q-id').value = '';
         document.getElementById('q-optA').value = 'SALAH';
         document.getElementById('q-optB').value = 'BENAR';
+        document.getElementById('q-correct').value = 'A';
         document.getElementById('q-duration').value = '10';
         document.getElementById('q-order').value = String((allQuestions ? allQuestions.length : 0) + 1);
         document.getElementById('q-active').checked = true;
@@ -1265,17 +1672,20 @@
       const q = allQuestions[index];
       if (!q) return;
       openModal(true);
-      document.getElementById('q-id').value = q.id;
-      document.getElementById('q-text').value = q.question;
-      document.getElementById('q-optA').value = q.optionA;
-      document.getElementById('q-optB').value = q.optionB;
-      document.getElementById('q-correct').value = q.correctAnswer;
-      document.getElementById('q-duration').value = q.duration;
-      document.getElementById('q-order').value = q.order;
+      document.getElementById('q-id').value = q.id || '';
+      document.getElementById('q-text').value = q.question || '';
+      document.getElementById('q-optA').value = q.optionA || 'SALAH';
+      document.getElementById('q-optB').value = q.optionB || 'BENAR';
+      document.getElementById('q-correct').value = normalizeAnswer(q.correctAnswer);
+      document.getElementById('q-duration').value = q.duration || 10;
+      document.getElementById('q-order').value = q.order !== undefined ? q.order : (index + 1);
       document.getElementById('q-explanation').value = q.explanation || '';
-      document.getElementById('q-active').checked = q.active;
-      setImagePreview(q.imageUrl || '');
-      document.getElementById('q-image-url').value = '';
+      document.getElementById('q-active').checked = q.active !== false;
+      const img = q.imageUrl || '';
+      setImagePreview(img);
+      if (img.startsWith('http')) {
+        document.getElementById('q-image-url').value = img;
+      }
     }
 
     function setImagePreview(url) {
@@ -1304,16 +1714,15 @@
 
     function onImageUrlInput() {
       const v = document.getElementById('q-image-url').value.trim();
-      const img = document.getElementById('q-image-preview');
       const wrap = document.getElementById('q-image-preview-wrap');
       const url = /^https?:\/\//i.test(v) ? normalizeImageUrl(v) : '';
 
       document.getElementById('q-image').value = url;
       if (url) {
-        img.src = url;
+        document.getElementById('q-image-preview').src = url;
         wrap.classList.remove('hidden');
       } else {
-        img.removeAttribute('src');
+        document.getElementById('q-image-preview').removeAttribute('src');
         wrap.classList.add('hidden');
       }
     }
@@ -1382,21 +1791,26 @@
 
       const payload = {
         id: id,
-        question: document.getElementById('q-text').value,
-        optionA: document.getElementById('q-optA').value,
-        optionB: document.getElementById('q-optB').value,
-        correctAnswer: document.getElementById('q-correct').value,
-        explanation: document.getElementById('q-explanation').value,
-        duration: Number(document.getElementById('q-duration').value),
-        order: Number(document.getElementById('q-order').value),
+        question: document.getElementById('q-text').value.trim(),
+        optionA: document.getElementById('q-optA').value.trim() || 'SALAH',
+        optionB: document.getElementById('q-optB').value.trim() || 'BENAR',
+        correctAnswer: normalizeAnswer(document.getElementById('q-correct').value),
+        explanation: document.getElementById('q-explanation').value.trim(),
+        duration: Math.max(5, Math.min(60, Number(document.getElementById('q-duration').value) || 10)),
+        order: Number(document.getElementById('q-order').value) || 1,
         active: document.getElementById('q-active').checked,
-        imageUrl: document.getElementById('q-image').value
+        imageUrl: document.getElementById('q-image').value.trim()
       };
+
+      if (!payload.question) {
+        alert('Pertanyaan tidak boleh kosong.');
+        return;
+      }
 
       cancelBtn.disabled = true;
       let ok = false;
 
-      await withButtonLoading(btn, 'Menyimpan...', async () => {
+      await withButtonLoading(btn, 'Menyimpan ke akun Anda...', async () => {
         const res = id
           ? await apiPost('updateQuestion', { payload })
           : await apiPost('createQuestion', { payload });
@@ -1408,14 +1822,21 @@
 
       if (ok) {
         closeModal();
-        loadQuestionsTable();
+        await loadQuestionsTable();
       }
     }
 
-    async function deleteQuestion(id) {
-      if (confirm('Apakah Anda yakin ingin menghapus soal ini?')) {
-        await withLoading('Menhapus soal...', () => apiPost('deleteQuestion', { id }));
-        loadQuestionsTable();
+    async function confirmDeleteQuestion(index) {
+      const q = allQuestions[index];
+      if (!q) return;
+      if (confirm(`Apakah Anda yakin ingin menghapus soal:\n"${q.question}"?`)) {
+        await withLoading('Menghapus soal dari akun Anda...', async () => {
+          const res = await apiPost('deleteQuestion', { id: q.id });
+          if (res && res.success === false) {
+            alert(res.message || 'Gagal menghapus soal.');
+          }
+        });
+        await loadQuestionsTable();
       }
     }
   </script>

@@ -1,12 +1,24 @@
-// Service worker: network-first supaya pembaruan dari GitHub selalu terbaru,
+// Service worker: network-first supaya pembaruan selalu terbaru,
 // dengan cadangan cache saat offline. Data Firebase TIDAK di-cache.
-const CACHE = 'truefalse-v1';
-const SHELL = ['./', './index.html', './firebase-config.js', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png'];
+const CACHE = 'truefalse-v2';
+const SHELL = [
+  './',
+  './index.html',
+  './firebase-config.js',
+  './manifest.webmanifest',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
+  './icons/apple-touch-icon.png'
+];
 const CDN_OK = ['cdn.tailwindcss.com', 'www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE).then(async c => {
+      await Promise.allSettled(SHELL.map(url => c.add(url)));
+    }).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', e => {
