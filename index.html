@@ -114,9 +114,10 @@
     }
     .zone-a-base { border-right: 3px dashed rgba(255,92,92,0.35); background: rgba(255,92,92,0.06); }
     .zone-b-base { background: rgba(51,209,125,0.06); }
-    .zone-state-correct { background: rgba(51,209,125,0.38) !important; box-shadow: inset 0 0 0 3px rgba(51,209,125,0.7); }
-    .zone-state-wrong { background: rgba(255,92,92,0.38) !important; }
-    .zone-state-off { background: rgba(0,0,0,0.65) !important; box-shadow: none !important; }
+    .zone-state-correct { background: rgba(51,209,125,0.35) !important; box-shadow: inset 0 0 0 3px rgba(51,209,125,0.8); }
+    /* Warna oranye netral & hangat untuk zona pilihan yang belum tepat (bukan merah menyala) */
+    .zone-state-chosen-warn { background: rgba(245,158,11,0.22) !important; box-shadow: inset 0 0 0 3px rgba(245,158,11,0.7); }
+    .zone-state-off { background: rgba(0,0,0,0.65) !important; box-shadow: none !important; opacity: 0.45; }
     .zone-state-off .zone-tag, .zone-state-off span { opacity: 0.35; }
 
     .zone-tag { font-weight: 800; font-size: 0.75rem; padding: 0.35rem 0.8rem; clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px); }
@@ -126,14 +127,26 @@
     .result-banner {
       width: 100%;
       font-family: 'Bebas Neue', sans-serif;
-      font-size: 1.9rem;
+      font-size: 1.6rem;
       letter-spacing: 0.03em;
-      padding: 1rem 0;
+      padding: 0.75rem 1rem;
       clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
       box-shadow: 0 10px 24px rgba(0,0,0,0.4);
     }
     .result-correct { background: var(--win); color: #06251A; }
-    .result-wrong { background: var(--lose); color: #2B0505; }
+    .result-warn { background: #F59E0B; color: #1E1200; }
+    .result-neutral { background: var(--panel-soft); color: var(--chalk); border: 1px solid rgba(255,255,255,0.18); }
+    .result-chosen-tag {
+      display: inline-block;
+      font-size: 0.68rem;
+      letter-spacing: 0.05em;
+      padding: 0.2rem 0.65rem;
+      background: rgba(0, 0, 0, 0.55);
+      border-radius: 9999px;
+      margin-bottom: 0.35rem;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #fff;
+    }
 
     .timer-chip { transition: transform 0.2s ease, border-color 0.2s ease; }
     .timer-urgent { border-color: var(--lose) !important; }
@@ -314,10 +327,11 @@
               createdAt: firebase.firestore.FieldValue.serverTimestamp(),
               updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             });
-            await userDoc.set({
+            // Simpan metadata profil secara asinkron tanpa memblokir pembuatan soal
+            userDoc.set({
               email: user.email || '',
               lastActive: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            }, { merge: true }).catch(err => console.warn('User profile set notice:', err));
             return { success: true };
           }
 
@@ -355,7 +369,7 @@
           'auth/invalid-email': 'Format email tidak valid.',
           'auth/too-many-requests': 'Terlalu banyak percobaan. Tunggu beberapa saat lalu coba lagi.',
           'auth/unauthorized-domain': 'Domain belum diizinkan di Firebase Console > Authentication > Settings > Authorized domains.',
-          'permission-denied': 'Izin ditolak oleh Firestore Rules. Setiap akun hanya diizinkan mengelola database soal miliknya sendiri.'
+          'permission-denied': 'Izin menulis ditolak (permission-denied).\n\nPenyebab: Aturan keamanan Firestore di Firebase Console belum diperbarui atau belum dipublikasikan.\n\nSolusi:\n1. Buka https://console.firebase.google.com/ lalu pilih proyek ini.\n2. Masuk ke menu "Firestore Database" > tab "Rules".\n3. Salin isi file "firestore.rules" terbaru dan tempel di sana.\n4. Klik tombol "Publish" (Publikasikan).'
         };
         return { success: false, message: (hints[code] || (e.message || 'Terjadi kesalahan.')) + '\n\n[kode: ' + code + ']' };
       }
@@ -410,6 +424,11 @@
       playCountdown() { this.playTone(440, 'sine', 0.1, 0.05); }
       playUrgent() { this.playTone(880, 'square', 0.15, 0.15); }
       playCorrect() { this.playTone(523.25, 'sine', 0.15); setTimeout(() => this.playTone(659.25, 'sine', 0.15), 120); setTimeout(() => this.playTone(783.99, 'sine', 0.3), 240); }
+      playTryAgain() {
+        // Nada lembut & bersahabat (bukan buzzer/menghukum)
+        this.playTone(392, 'sine', 0.22, 0.08);
+        setTimeout(() => this.playTone(329.63, 'sine', 0.32, 0.08), 160);
+      }
       playWrong() { this.playTone(220, 'sawtooth', 0.25); setTimeout(() => this.playTone(185, 'sawtooth', 0.35), 150); }
       playNext() { this.playTone(587.33, 'sine', 0.2); }
       playFinish() { [523.25, 659.25, 783.99, 1046.50].forEach((f, i) => { setTimeout(() => this.playTone(f, 'triangle', 0.25), i * 150); }); }
@@ -570,6 +589,18 @@
       <div id="pre-countdown-overlay" class="absolute inset-0 z-30 bg-[var(--ink)]/92 backdrop-blur-md flex flex-col items-center justify-center hidden">
         <span class="text-[var(--muted)] text-base font-extrabold mb-2 uppercase tracking-widest">Soal berikutnya dalam</span>
         <span id="pre-countdown-num" class="display-font text-8xl text-[var(--gold)] animate-pop">3</span>
+      </div>
+
+      <!-- KARTU HASIL PENILAIAN / EVALUATION FEEDBACK OVERLAY -->
+      <div id="evaluation-card" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 max-w-lg w-[92%] p-6 sm:p-7 rounded-3xl text-center shadow-2xl backdrop-blur-xl border pointer-events-none transition-all duration-300">
+        <div id="eval-icon" class="text-5xl sm:text-6xl mb-2"></div>
+        <h3 id="eval-headline" class="display-font text-3xl sm:text-5xl tracking-wider leading-none"></h3>
+        <p id="eval-message" class="text-sm sm:text-base font-bold text-slate-100 mt-2.5 leading-snug"></p>
+        <div class="mt-4 pt-3 border-t border-white/20 flex flex-wrap items-center justify-center gap-2">
+          <span id="eval-chosen-chip" class="px-3 py-1 rounded-full text-xs font-extrabold bg-black/40 text-white"></span>
+          <span id="eval-key-chip" class="px-3 py-1 rounded-full text-xs font-extrabold bg-white/25 text-white"></span>
+        </div>
+        <p id="eval-explanation" class="text-xs text-white/90 italic mt-2.5"></p>
       </div>
 
       <!-- PANEL SOAL -->
@@ -1146,6 +1177,9 @@
 
     function exitGame() {
       stopCameraStream();
+      confettiParticles = [];
+      const evalCard = document.getElementById('evaluation-card');
+      if (evalCard) evalCard.classList.add('hidden');
       if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
       if (preInterval) { clearInterval(preInterval); preInterval = null; }
       if (nextTimeout) { clearTimeout(nextTimeout); nextTimeout = null; }
@@ -1171,6 +1205,56 @@
       }
     }
 
+    // Partikel animasi kemenangan (confetti)
+    let confettiParticles = [];
+    function fireConfetti() {
+      const canvas = document.getElementById('tracker-canvas');
+      if (!canvas) return;
+      const w = canvas.width || 640;
+      const h = canvas.height || 480;
+      confettiParticles = [];
+      const colors = ['#33D17D', '#FFC845', '#38BDF8', '#F472B6', '#A78BFA', '#FFFFFF'];
+      for (let i = 0; i < 80; i++) {
+        confettiParticles.push({
+          x: w / 2 + (Math.random() - 0.5) * (w * 0.5),
+          y: h * 0.45 + (Math.random() - 0.5) * 50,
+          vx: (Math.random() - 0.5) * 14,
+          vy: -Math.random() * 8 - 4,
+          size: Math.random() * 8 + 4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          rotation: Math.random() * 360,
+          vRot: (Math.random() - 0.5) * 12,
+          life: 1.0
+        });
+      }
+    }
+
+    function updateAndDrawConfetti() {
+      if (!canvasContext || !confettiParticles.length) return;
+      const ctx = canvasContext;
+      for (let i = confettiParticles.length - 1; i >= 0; i--) {
+        const p = confettiParticles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.35;
+        p.rotation += p.vRot;
+        p.life -= 0.012;
+
+        if (p.life <= 0 || p.y > ctx.canvas.height + 30) {
+          confettiParticles.splice(i, 1);
+          continue;
+        }
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+        ctx.restore();
+      }
+    }
+
     function startGameTrackingLoop() {
       const video = document.getElementById('webcam');
       const canvas = document.getElementById('tracker-canvas');
@@ -1186,7 +1270,7 @@
       const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
 
       function processFrame() {
-        if (gameState === 'PLAYING' && video.readyState >= 2) {
+        if ((gameState === 'PLAYING' || gameState === 'RESULT') && video.readyState >= 2) {
           const vw = video.videoWidth || 640;
           const vh = video.videoHeight || 480;
 
@@ -1201,7 +1285,11 @@
           canvasContext.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
           canvasContext.restore();
 
-          if (!keyboardChoice) {
+          if (gameState === 'RESULT') {
+            updateAndDrawConfetti();
+          }
+
+          if (gameState === 'PLAYING' && !keyboardChoice) {
             try {
               sampleCtx.save();
               sampleCtx.scale(-1, 1);
@@ -1339,6 +1427,9 @@
     function loadQuestion(index) {
       keyboardChoice = null;
       resetDetection();
+      confettiParticles = [];
+      const evalCard = document.getElementById('evaluation-card');
+      if (evalCard) evalCard.classList.add('hidden');
       const q = questions[index];
 
       document.getElementById('question-counter').innerText = `SOAL ${index + 1} / ${questions.length}`;
@@ -1411,8 +1502,8 @@
       const timerBox = document.getElementById('timer-box');
       if (timerBox) timerBox.classList.remove('animate-glow', 'timer-urgent');
 
-      const correct = normalizeAnswer(q.correctAnswer);
-      let chosen;
+      const correct = normalizeAnswer(q.correctAnswer); // 'A' (SALAH) atau 'B' (BENAR)
+      let chosen = null;
       if (keyboardChoice) {
         chosen = keyboardChoice;
       } else if (zoneBScore > zoneAScore) {
@@ -1420,9 +1511,10 @@
       } else if (zoneAScore > zoneBScore) {
         chosen = 'A';
       } else {
-        chosen = (zoneAScore === 0 && zoneBScore === 0) ? null : correct;
+        chosen = (zoneAScore === 0 && zoneBScore === 0) ? null : 'TIE';
       }
 
+      // Hitung persentase benar / salah kelas
       const percentBenar = (zoneAScore === 0 && zoneBScore === 0)
         ? 0
         : (correct === 'A' ? zoneAScore : zoneBScore);
@@ -1444,43 +1536,136 @@
       const zoneA = document.getElementById('zone-a-overlay');
       const zoneB = document.getElementById('zone-b-overlay');
 
-      if (correct === 'A') {
-        zoneA.classList.add('zone-state-correct');
-        zoneB.classList.add('zone-state-off');
-        resA.classList.remove('hidden');
-        resA.classList.add('result-correct', 'animate-glow');
-        resA.innerHTML = `✓ KUNCI: SALAH`;
+      const evalCard = document.getElementById('evaluation-card');
+      const evalIcon = document.getElementById('eval-icon');
+      const evalHeadline = document.getElementById('eval-headline');
+      const evalMessage = document.getElementById('eval-message');
+      const evalChosenChip = document.getElementById('eval-chosen-chip');
+      const evalKeyChip = document.getElementById('eval-key-chip');
+      const evalExplanation = document.getElementById('eval-explanation');
 
-        resB.classList.remove('hidden');
-        resB.classList.add('result-wrong');
-        resB.innerHTML = `✕ BUKAN BENAR`;
-      } else {
-        zoneB.classList.add('zone-state-correct');
-        zoneA.classList.add('zone-state-off');
-        resB.classList.remove('hidden');
-        resB.classList.add('result-correct', 'animate-glow');
-        resB.innerHTML = `✓ KUNCI: BENAR`;
+      const correctName = (correct === 'A' ? 'SALAH' : 'BENAR');
+      const chosenName = chosen === 'A' ? 'SALAH' : (chosen === 'B' ? 'BENAR' : (chosen === 'TIE' ? 'SEIMBANG' : 'TIDAK ADA'));
+      const chosenScore = chosen === 'A' ? zoneAScore : (chosen === 'B' ? zoneBScore : 0);
 
-        resA.classList.remove('hidden');
-        resA.classList.add('result-wrong');
-        resA.innerHTML = `✕ BUKAN SALAH`;
-      }
+      evalChosenChip.innerText = chosen ? `📍 Pilihan Siswa: ${chosenName} (${chosenScore}%)` : `📍 Pilihan Siswa: (Waktu Habis)`;
+      evalKeyChip.innerText = `⭐ Kunci Soal: ${correctName}`;
+      evalExplanation.innerText = q.explanation ? `Penjelasan: ${q.explanation}` : '';
 
-      if (chosen === correct) {
+      resA.classList.remove('hidden');
+      resB.classList.remove('hidden');
+
+      // =========================================================================
+      // KASUS 1: Pernyataan BENAR + siswa memilih BENAR
+      // =========================================================================
+      if (correct === 'B' && chosen === 'B') {
+        evalCard.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 max-w-lg w-[92%] p-6 sm:p-7 rounded-3xl text-center shadow-2xl backdrop-blur-xl border pointer-events-none bg-emerald-600/95 border-emerald-300 text-white shadow-[0_0_50px_rgba(16,185,129,0.65)] animate-glow animate-pop';
+        evalIcon.innerHTML = `<span class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/20 text-white font-black text-4xl">✓</span>`;
+        evalHeadline.innerText = `Benar! Hebat!`;
+        evalMessage.innerText = `Pernyataan ini BENAR dan kelas berhasil memilih jawaban yang tepat!`;
+
+        zoneB.className = 'zone-panel zone-b-base zone-state-correct';
+        zoneA.className = 'zone-panel zone-a-base zone-state-off';
+        resB.className = 'text-center result-banner result-correct animate-glow';
+        resB.innerHTML = `<span class="result-chosen-tag">📍 PILIHAN SISWA (${zoneBScore}%)</span><div>✓ BENAR! HEBAT!</div>`;
+        resA.className = 'text-center result-banner result-neutral';
+        resA.innerHTML = `<div>BUKAN SALAH</div>`;
+
         sound.playCorrect();
-      } else if (chosen !== null) {
-        sound.playWrong();
+        fireConfetti();
       }
+      // =========================================================================
+      // KASUS 2: Pernyataan SALAH + siswa memilih SALAH
+      // =========================================================================
+      else if (correct === 'A' && chosen === 'A') {
+        evalCard.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 max-w-lg w-[92%] p-6 sm:p-7 rounded-3xl text-center shadow-2xl backdrop-blur-xl border pointer-events-none bg-emerald-600/95 border-emerald-300 text-white shadow-[0_0_50px_rgba(16,185,129,0.65)] animate-glow animate-pop';
+        evalIcon.innerHTML = `<span class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/20 text-white font-black text-4xl">✓</span>`;
+        evalHeadline.innerText = `Tepat! Kamu berhasil mengenali pernyataan yang salah!`;
+        evalMessage.innerText = `Pernyataan ini memang SALAH, dan kelas berhasil menjawab dengan tepat!`;
+
+        zoneA.className = 'zone-panel zone-a-base zone-state-correct';
+        zoneB.className = 'zone-panel zone-b-base zone-state-off';
+        resA.className = 'text-center result-banner result-correct animate-glow';
+        resA.innerHTML = `<span class="result-chosen-tag">📍 PILIHAN SISWA (${zoneAScore}%)</span><div>✓ TEPAT! KUNCI: SALAH</div>`;
+        resB.className = 'text-center result-banner result-neutral';
+        resB.innerHTML = `<div>BUKAN BENAR</div>`;
+
+        sound.playCorrect();
+        fireConfetti();
+      }
+      // =========================================================================
+      // KASUS 3: Jawaban siswa KELIRU (warna oranye hangat/netral, bukan merah menyala)
+      // =========================================================================
+      else if (chosen && chosen !== correct) {
+        evalCard.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 max-w-lg w-[92%] p-6 sm:p-7 rounded-3xl text-center shadow-2xl backdrop-blur-xl border pointer-events-none bg-amber-600/95 border-amber-300 text-white shadow-[0_0_40px_rgba(245,158,11,0.55)] animate-pop';
+        evalIcon.innerHTML = `<span class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-black/25 text-white text-3xl">💡</span>`;
+        evalHeadline.innerText = `Belum tepat, coba lagi!`;
+        evalMessage.innerText = `Pernyataan ini seharusnya ${correctName}. Jangan berkecil hati, mari coba lagi di soal berikutnya!`;
+
+        if (chosen === 'A') {
+          // Siswa memilih SALAH padahal kuncinya BENAR
+          zoneA.className = 'zone-panel zone-a-base zone-state-chosen-warn';
+          resA.className = 'text-center result-banner result-warn';
+          resA.innerHTML = `<span class="result-chosen-tag">📍 PILIHAN SISWA (${zoneAScore}%)</span><div>JAWABAN DIPILIH</div>`;
+
+          zoneB.className = 'zone-panel zone-b-base zone-state-correct';
+          resB.className = 'text-center result-banner result-correct animate-glow';
+          resB.innerHTML = `<div>⭐ KUNCI JAWABAN: BENAR</div>`;
+        } else {
+          // Siswa memilih BENAR padahal kuncinya SALAH
+          zoneB.className = 'zone-panel zone-b-base zone-state-chosen-warn';
+          resB.className = 'text-center result-banner result-warn';
+          resB.innerHTML = `<span class="result-chosen-tag">📍 PILIHAN SISWA (${zoneBScore}%)</span><div>JAWABAN DIPILIH</div>`;
+
+          zoneA.className = 'zone-panel zone-a-base zone-state-correct';
+          resA.className = 'text-center result-banner result-correct animate-glow';
+          resA.innerHTML = `<div>⭐ KUNCI JAWABAN: SALAH</div>`;
+        }
+
+        sound.playTryAgain();
+      }
+      // =========================================================================
+      // KASUS 4: Waktu habis tanpa pilihan / seimbang
+      // =========================================================================
+      else {
+        evalCard.className = 'absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-40 max-w-lg w-[92%] p-6 sm:p-7 rounded-3xl text-center shadow-2xl backdrop-blur-xl border pointer-events-none bg-slate-800/95 border-slate-500 text-white shadow-2xl animate-pop';
+        evalIcon.innerHTML = `<span class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/10 text-white text-3xl">⏱️</span>`;
+        evalHeadline.innerText = `Waktu Habis!`;
+        evalMessage.innerText = `Kunci jawaban untuk soal ini adalah: ${correctName}.`;
+
+        if (correct === 'A') {
+          zoneA.className = 'zone-panel zone-a-base zone-state-correct';
+          zoneB.className = 'zone-panel zone-b-base zone-state-off';
+          resA.className = 'text-center result-banner result-correct';
+          resA.innerHTML = `<div>⭐ KUNCI JAWABAN: SALAH</div>`;
+          resB.className = 'text-center result-banner result-neutral';
+          resB.innerHTML = `<div>BUKAN BENAR</div>`;
+        } else {
+          zoneB.className = 'zone-panel zone-b-base zone-state-correct';
+          zoneA.className = 'zone-panel zone-a-base zone-state-off';
+          resB.className = 'text-center result-banner result-correct';
+          resB.innerHTML = `<div>⭐ KUNCI JAWABAN: BENAR</div>`;
+          resA.className = 'text-center result-banner result-neutral';
+          resA.innerHTML = `<div>BUKAN SALAH</div>`;
+        }
+
+        sound.playTryAgain();
+      }
+
+      evalCard.classList.remove('hidden');
 
       nextTimeout = setTimeout(() => {
         currentIndex++;
         startPreCountdown(currentIndex);
-      }, 4500);
+      }, 5000);
     }
 
     function finishQuiz() {
       sound.playFinish();
       stopCameraStream();
+      confettiParticles = [];
+      const evalCard = document.getElementById('evaluation-card');
+      if (evalCard) evalCard.classList.add('hidden');
       if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
       if (preInterval) { clearInterval(preInterval); preInterval = null; }
       if (nextTimeout) { clearTimeout(nextTimeout); nextTimeout = null; }
